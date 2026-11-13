@@ -1,0 +1,45 @@
+# Protocolo de evaluación
+
+## Diseño previo
+
+Antes del entrenamiento principal, congelar manifiesto de particiones, representación, versiones, semillas, espacio de búsqueda y presupuesto por clasificador. Comparar SVM, RF, k-NN y MLP con las mismas muestras y particiones. Documentar transformaciones específicas necesarias para cada estimador; nunca ajustarlas con datos externos al tramo de entrenamiento.
+
+En un experimento aparte estudiar características propias de procesamiento de imágenes y, si corresponde, representación preentrenada y concatenación. Declarar dimensiones, escalas y coste; no atribuir al clasificador una mejora producida por cambiar el extractor.
+
+Elegir hiperparámetros y modelo con TRAIN/VALIDATION. Si se utiliza validación cruzada, agrupar por sesión y verificar presencia de clases; no usar folds aleatorios de fotogramas. Registrar advertencias de convergencia y candidatos fallidos.
+
+## Identificación cerrada
+
+Para cada modelo reportar exactitud, precisión/recall/F1 por identidad, macro-F1 y matriz 4×4 con ejes y soportes. Mostrar TRAIN y VALIDATION diferenciados y TEST al final. Esta evaluación mide la clasificación candidata de conocidos antes del rechazo.
+
+## Rechazo y autorización
+
+Definir scores por modelo y calibrarlos sin TEST. Un score alto o una softmax no garantizan que un rostro pertenezca al conjunto conocido. Documentar fórmula de distancia/similitud cuando se use, normalización, umbrales y condiciones de aceptación. Si se usa coseno: `s(x,y) = (x·y)/(||x|| ||y||)`; rechazar vectores de norma cero. Su uso no está decidido.
+
+Reportar por separado:
+
+| Medida | Numerador / denominador |
+| --- | --- |
+| Aceptación de desconocidos | Intentos desconocidos aceptados como alguna identidad / intentos desconocidos válidos |
+| Rechazo indebido de identidad | Intentos conocidos devueltos como UNKNOWN / intentos conocidos válidos |
+| Identificación incorrecta aceptada | Intentos conocidos aceptados con otra identidad / intentos conocidos válidos |
+| Autorización indebida de desconocidos | Intentos desconocidos con GRANTED / todos los intentos desconocidos |
+| Denegación a autorizados | Intentos de personas con permiso activo con DENIED / todos sus intentos |
+
+Distinguir identificación y acceso: reconocer correctamente a alguien sin permiso exige DENIED. Añadir tabla de resultados con columna UNKNOWN para las cuatro identidades y desconocidos. Contabilizar fallos de captura/detección en la evaluación de extremo a extremo, aunque se excluyan justificadamente de la clasificación condicionada a rostro válido.
+
+Definir un intento como una presentación delimitada con inicio, fin y una decisión final. Fijar antes de medir su duración máxima, regla temporal y separación entre intentos. No tratar fotogramas consecutivos como ensayos independientes. Reportar cantidades, denominadores y resultados por sesión; si se calculan intervalos, respetar el agrupamiento. Cero errores observados no demuestra riesgo cero.
+
+## Rendimiento y pruebas prácticas
+
+Medir entrenamiento, inferencia del clasificador, pipeline de reconocimiento y tiempo hasta confirmación física por separado. Usar reloj monotónico; indicar equipo, cámara, resolución, versiones, calentamiento, cantidad de ensayos, mediana y p95. Reportar FPS procesados y descartes de fotogramas, no solo FPS de visualización.
+
+Probar identidad con permiso, sin permiso, desconocido, ausencia/multiplicidad de rostros, condiciones nuevas, fallo de cámara/modelo, revocación, desconexión y repetición de órdenes. Ensayar presentaciones mediante fotografía/vídeo con consentimiento y describir resultados; si falta detección de vida, declarar la vulnerabilidad. No inferir seguridad física de la accuracy.
+
+## Selección y evidencia
+
+Antes de TEST definir metas de rechazo, calidad y latencia a partir del piloto y del dispositivo. La selección prioriza el riesgo de autorización indebida y considera macro-F1, rechazos y coste. Si ningún candidato cumple las metas, registrar el incumplimiento.
+
+Congelar el modelo y la política elegidos antes de TEST. Evaluar también candidatos congelados para la comparación final sin cambiar retrospectivamente al ganador. Cualquier ajuste tras examinar TEST requiere declarar ese conjunto consumido y obtener nueva evaluación independiente.
+
+Guardar configuración, versiones/hashes, cantidades por partición, métricas, matrices, tiempos, limitaciones y decisión justificada. Solo publicar reportes agregados revisados; resultados y modelos personalizados quedan privados. Actualmente no existen resultados medidos.

@@ -1,0 +1,29 @@
+# Datos privados y artefactos personalizados
+/data/
+/artifacts/
+/models/
+/private/
+/outputs/
+/docs/transcription.md
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# Entorno Python
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Herramientas locales
+.vscode/
+.idea/
+
+# Archivos varios
+instruction.md
