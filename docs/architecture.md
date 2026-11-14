@@ -1,6 +1,6 @@
 # Arquitectura propuesta
 
-**Estado:** diseño inicial, sin dependencias ni dispositivos seleccionados. Los contratos son conceptuales; se concretarán al implementar.
+**Estado:** diseño inicial; cámara de captura TMCAM 8305 elegida, OpenCV incorporado para diagnóstico. Extractor y dispositivo de acceso pendientes. Los contratos son conceptuales; se concretarán al implementar.
 
 ## Criterio de implementación
 
@@ -34,6 +34,8 @@ Antes de emitir una orden se vuelven a comprobar permiso y vigencia. Una descone
 
 ## Opciones iniciales
 
-Python para procesamiento y experimentos, con herramientas de clasificación y pruebas automatizadas, es una propuesta pendiente de validar en el equipo disponible. Framework de interfaz, detector, extractor y transporte al dispositivo se elegirán después de revisar compatibilidad, licencias y rendimiento. No se descargan pesos ni se fijan versiones sin esa revisión.
+Python y OpenCV ya se utilizan en el diagnóstico; el stack de entrenamiento y la inferencia con pesos siguen pendientes de validación. Framework de interfaz, detector, extractor y transporte al dispositivo se elegirán después de revisar compatibilidad, licencias y rendimiento. No se descargan pesos ni se fijan versiones sin esa revisión.
 
 Se explorará una representación de características de imagen explicable y, si se elige un extractor preentrenado, su comparación o combinación controlada. La comparación principal de clasificadores fija la representación y las muestras. Los cambios de representación constituyen otro experimento.
+
+Preparación documental de detección/alineación/extracción: [model_verification.md](model_verification.md). La presencia de APIs locales no acredita que los pesos se hayan cargado.

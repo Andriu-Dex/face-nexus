@@ -4,7 +4,7 @@
 
 `PROF`: instrucción explícita identificable en la transcripción. `CLASE`: concepto o metodología explicada, sin convertir cada ejemplo en obligación. `CONF`: aclaración expresa del responsable. `PROY`: decisión del proyecto revisable con evidencia y registro en `decisions.md`.
 
-Las referencias de origen se encuentran en [source_analysis.md](source_analysis.md). Ninguna cifra de rendimiento está medida todavía.
+Las referencias de origen se encuentran en [source_analysis.md](source_analysis.md). Solo hay mediciones de captura de cámara (informe 03); no existen resultados de reconocimiento, rechazo o acceso físico.
 
 ## Requisitos trazables
 
@@ -14,6 +14,7 @@ Las referencias de origen se encuentran en [source_analysis.md](source_analysis.
 | PROF-02 | Adquirir datos propios de participantes; se pueden usar datasets auxiliares | Inventario privado de capturas y procedencia |
 | PROF-03 | Probar varios clasificadores, mostrar exactitudes y pruebas y justificar la elección | Informe reproducible de comparación |
 | PROF-04 | Explicar y aplicar conocimientos de características y procesamiento de imágenes, pudiendo usar bibliotecas | Pipeline explicado y experimento de representación propia |
+| CONF-03 | Usar exclusivamente TMCAM 8305 para captura y operación; verificar objetivo 1080p/30 FPS antes de captura definitiva | Resolución recibida, frecuencia de entrega y estabilidad medidas; 60 Hz y parpadeo comprobados por separado |
 | CONF-02 | Priorizar código sencillo de entender, explicar y defender sobre patrones y convenciones que compliquen la solución | Revisión del flujo y explicación de cada operación; conservar corrección experimental y denegación ante fallos |
 | CONF-01 | Integrar obligatoriamente un dispositivo físico de acceso en la entrega final | Apertura real autorizada y denegación verificadas con el hardware |
 | CLASE-01 | Organizar y explicar las etapas de adquisición a postprocesamiento | Correspondencia entre módulos y memoria técnica |
