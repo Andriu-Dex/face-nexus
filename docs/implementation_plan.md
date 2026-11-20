@@ -1,6 +1,6 @@
 # Plan de implementación
 
-Actualizado el 13-11-2026 con las siete fases acordadas. La preparación documental inicial se conserva como antecedente. Actualmente la fase 1 tiene investigación y protocolos redactados; no hay dataset capturado. Se incorpora la herramienta de diagnóstico de cámara; su validación física se registra por separado.
+Actualizado el 19-11-2026 con las [aclaraciones de clase](source_analysis.md#aclaraciones-de-la-clase-del-19-de-noviembre). El volumen cifrado y la TMCAM ya se verificaron. Están auditados S01 y R01, y el código de comparación de referencia se probó con datos sintéticos. El nodo IoT, los modelos propios y la demostración con varias personas pasan a ser prioridades.
 
 Cada fase requiere plan breve de archivos, trabajo acotado, comprobaciones disponibles, inspección de resultados y registro de evidencia antes de preparar un commit. No publicar ramas ni cambios remotos sin autorización. Priorizar claridad y defensa del código (CONF-02).
 
@@ -26,8 +26,19 @@ Anotar fecha, requisito, versión/configuración, comando o procedimiento, resul
 
 ## Siguiente paso concreto
 
-La cámara es apta para el piloto bajo las condiciones medidas; pendientes acotados en [informe 03](reports/03_camera_diagnostic.md). No repetir el ensayo continuo solo para cerrar documentación.
+### Prioridades para la demostración
 
-Aplicar la [ficha operativa al final del protocolo de datos](data_protocol.md#ficha-operativa-del-piloto--propuesta-del-14-11-2026): 20 fotos por persona. El responsable confirmó custodia, eliminación a 90 días de la defensa y consentimiento individual ya obtenido. Se prepararon y probaron con 80 imágenes sintéticas la captura manual y auditoría estructural; ver [guía operativa](pilot_capture.md). Los destinos privados fueron creados y se verificó su exclusión de Git y ACL local. Ejecutar el piloto manual con cada participante y auditar resultados; las pruebas sintéticas no sustituyen las capturas reales. La captura definitiva requiere revisión de sus resultados y aprobación posterior.
+1. Confirmar qué nodo con cámara tiene disponible el equipo y comprobar pronto el ciclo captura → computadora → respuesta → acción observable. La tira LED es una opción de salida física aceptada en clase.
+2. Preparar la clasificación humano/no humano con ejemplos adecuados para esa tarea y entrenar los modelos de entrega. Usar una representación facial explicable para comparar candidatos. Conservar YuNet para localización/recorte y usar SFace y el código actual como referencia interna.
+3. Confirmar que S01 y R01 son encuentros distintos para cada integrante. Si se confirma, usar S01 para ajuste y considerar R01 para una evaluación entre encuentros con los datos disponibles. Mantener asignaciones y resultados explícitos. Un ensayo en vivo con el modelo congelado aporta evidencia adicional sin requerir otro lote de fotografías almacenadas.
+4. Ensayar una persona autorizada, varias autorizadas, una autorizada con desconocidos, solo desconocidos y la salida de la última persona autorizada. Presentar el modelo elegido y documentar en el informe la exactitud de los candidatos y la interfaz.
 
-La [preparación de YuNet y SFace](model_verification.md) distingue documentación/API local de carga de pesos pendiente. No hay descargas autorizadas por esta fase ni entrenamiento. Mantener sesiones de TEST fuera de cualquier depuración.
+### Preparación técnica ya realizada
+
+La [preparación de la comparación](reports/09_classifier_preparation.md) permite verificar los cuatro clasificadores con datos sintéticos y preparar los lotes de fotogramas de las nuevas grabaciones. La comparación real sigue pendiente de sesiones independientes.
+
+Completar la [evaluación de impacto](biometric_impact_assessment.md) para el único flujo de acceso por reconocimiento facial y verificar localmente el alcance del consentimiento verbal grabado antes de la adquisición. Confirmar los datos de contacto del responsable. Los [formularios](consent_templates.md) quedan disponibles como apoyo opcional.
+
+La revisión local y el primer pipeline de las 80 candidatas se ejecutaron; ver [informe 07](reports/07_face_pipeline_validation.md): 73 embeddings válidos y siete sin detección, con fallos preservados y similitudes exploratorias solapadas. Se autorizaron únicamente los pesos concretos de YuNet y SFace y permanecen privados/verificados.
+
+El volumen VeraCrypt superó el remontaje y la comprobación del SHA-256 de prueba. La TMCAM superó el diagnóstico operativo de R01. El [primer lote de TRAIN](reports/09_classifier_preparation.md#primer-lote-de-train) produjo 72 embeddings válidos. Los resultados de R01 se conservan con su asignación histórica mientras se confirma el plan de evaluación entre encuentros.

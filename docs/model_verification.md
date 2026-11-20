@@ -1,6 +1,6 @@
-# Preparación de detector y extractor facial
+# Preparación y validación de detector y extractor facial
 
-Revisión del 14-11-2026, exclusivamente documental y de interfaces locales. No se descargaron binarios ONNX, datasets ni código para ejecutarlo; no se abrió cámara ni se extrajeron vectores. Se leyeron páginas y punteros LFS textuales. YuNet + SFace son candidatos a piloto, no selección definitiva.
+Antecedente del 14-11-2026, exclusivamente documental y de interfaces locales. **Actualización vigente:** el 17-11-2026 se adquirieron y verificaron los dos pesos autorizados, se cargaron y se ejecutaron sobre 80 candidatas; ver [informe 07](reports/07_face_pipeline_validation.md). Las frases siguientes sobre tareas sin ejecutar describen la preparación histórica, no el estado actual. No se descargaron binarios ONNX, datasets ni código para ejecutarlo; no se abrió cámara ni se extrajeron vectores. Se leyeron páginas y punteros LFS textuales. YuNet + SFace son candidatos a piloto, no selección definitiva.
 
 ## Responsabilidades y compatibilidad
 
@@ -45,3 +45,10 @@ InsightFace sigue como alternativa de extractor si SFace no satisface necesidade
 - [Y: README de YuNet](https://raw.githubusercontent.com/opencv/opencv_zoo/main/models/face_detection_yunet/README.md) y [YL: LICENSE de carpeta](https://raw.githubusercontent.com/opencv/opencv_zoo/main/models/face_detection_yunet/LICENSE).
 - [YP: puntero LFS YuNet](https://raw.githubusercontent.com/opencv/opencv_zoo/main/models/face_detection_yunet/face_detection_yunet_2023mar.onnx); [SP: puntero LFS SFace](https://raw.githubusercontent.com/opencv/opencv_zoo/main/models/face_recognition_sface/face_recognition_sface_2021dec.onnx).
 - [SC: implementación OpenCV de alineación y extracción](https://raw.githubusercontent.com/opencv/opencv/4.x/modules/objdetect/src/face_recognize.cpp).
+
+
+## Verificación ejecutada — 17-11-2026
+
+Se completaron procedencia/licencia/tamaño/hash contra revisión oficial fija, carga y ejecución CPU/OpenCV. YuNet detectó un rostro en 73/80 candidatas con score 0,9; en siete no hubo detección, conservadas sin sustituir. Alineación efectiva 112×112 BGR uint8 y salida SFace (1,128) float32, finita y de norma no nula. No hubo múltiples en la colección; un check controlado con dos rostros sí produjo multiple_faces sin extraer vector. La presencia de API dejó de ser la única evidencia.
+
+La exploración de cosenos muestra separación preliminar con solapamiento, sin umbral final ni accuracy independiente. Los modelos permanecen como baseline técnico, no selección final de reconocimiento. Descargar otros modelos, entrenar clasificadores o ajustar SFace queda fuera de esta autorización. Detalles reproducibles, tiempos y límites en el informe 07; no duplicar aquí los resultados por muestra.

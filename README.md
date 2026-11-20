@@ -2,7 +2,7 @@
 
 Proyecto académico de reconocimiento facial y control de acceso físico. Identificará cuatro personas registradas, rechazará desconocidos y comparará SVM, Random Forest, k-NN y ANN/MLP con las mismas particiones y representación de entrada.
 
-**Estado:** preparación del dataset y herramienta de diagnóstico de cámara. No hay reconocimiento implementado ni modelos entrenados; la TMCAM completó diez minutos a 1080p y 29,24 FPS medios; la comprobación de 60 Hz y el fallo de lectura por desconexión en caliente siguen pendientes. La entrega final requiere un dispositivo físico; una simulación solo permite avanzar durante el desarrollo.
+**Estado:** preparación del dataset y herramienta de diagnóstico de cámara. Hay detección/alineación y extracción de embeddings en desarrollo; no hay clasificadores entrenados ni reconocimiento evaluado; la TMCAM completó diez minutos a 1080p y 29,24 FPS medios; la comprobación de 60 Hz y el fallo de lectura por desconexión en caliente siguen pendientes. La entrega final requiere un dispositivo físico; una simulación solo permite avanzar durante el desarrollo.
 
 ## Documentación
 
@@ -27,3 +27,13 @@ Ver [instrucciones de instalación y prueba de la TMCAM](docs/camera_diagnostic.
 ## Preparación del piloto
 
 La cámara es apta para el piloto con las condiciones medidas. La [ficha de captura](docs/data_protocol.md#ficha-operativa-del-piloto--propuesta-del-14-11-2026) fue aceptada para el piloto y el custodio declara consentimiento de los cuatro. La captura manual y su auditoría estructural pasaron pruebas sintéticas; ver la [guía de captura](docs/pilot_capture.md). El estado de capturas reales se registra por separado. La [revisión de detector y extractor](docs/model_verification.md) es documental, sin pesos descargados. Ver [cierre y pendientes de esta fase](docs/reports/04_pilot_preparation.md).
+
+
+## Datos externos de desarrollo
+
+El [informe 06](docs/reports/06_external_frames.md) registra 11.413 frames auditados y una selección candidata de 80 copias, conservando originales. Todos los segmentos se agrupan en una S01/TRAIN por identidad; no hay todavía VALIDATION/TEST independientes ni calidad facial aprobada.
+
+
+## Primera validación facial
+
+[Informe 07](docs/reports/07_face_pipeline_validation.md): YuNet/SFace con pesos y licencias verificados, 73/80 embeddings válidos y siete casos sin detección preservados. Revisión visual local y exploración de similitud realizadas; hay solapamiento y no se estableció un umbral. No son resultados finales de reconocimiento o acceso.

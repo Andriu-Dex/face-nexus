@@ -1,6 +1,6 @@
 # Arquitectura propuesta
 
-**Estado:** diseño inicial; cámara de captura TMCAM 8305 elegida, OpenCV incorporado para diagnóstico. Extractor y dispositivo de acceso pendientes. Los contratos son conceptuales; se concretarán al implementar.
+**Estado:** TMCAM 8305 y el flujo con YuNet/SFace verificados para desarrollo. La demostración debe incorporar un nodo IoT con cámara y una salida física. La selección del equipo y los modelos de entrega siguen pendientes.
 
 ## Criterio de implementación
 
@@ -10,8 +10,9 @@ Conforme a CONF-02, esta tabla separa responsabilidades conceptuales; no impone 
 
 | Módulo | Entrada → salida | Responsabilidad |
 | --- | --- | --- |
-| Captura | Cámara → fotograma y tiempo monotónico | Lectura, frescura y errores; sin persistencia por defecto |
-| Detección | Fotograma → `FaceDetection` | Caja, score y validación de presencia única |
+| Captura | Cámara del nodo IoT → fotograma y referencia de la solicitud | Enviar a la computadora y comprobar frescura; TMCAM para desarrollo local |
+| Detección | Fotograma → lista de `FaceDetection` | Localizar candidatos para clasificar y reconocer por región |
+| Clasificación inicial | Región o imagen → humano/no humano | Modelo propio entrenado; sus negativos se preparan por separado |
 | Preparación | Región facial → imagen normalizada | Tamaño, canales, alineación y calidad documentados |
 | Características | Imagen → `Embedding` | Vector finito de dimensión fija y versión del extractor |
 | Clasificación | Vector → candidato y scores | Adaptador intercambiable SVM/RF/k-NN/MLP |
@@ -20,7 +21,7 @@ Conforme a CONF-02, esta tabla separa responsabilidades conceptuales; no impone 
 | Autorización | Predicción, permiso y contexto → `AccessDecision` | Denegar por defecto, comprobar frescura y ambigüedad |
 | Controlador | Decisión y contexto → estado de ejecución | Simulación inicial e integración física posterior |
 | Evaluación | Manifiesto y configuración → resultados | Experimentos reproducibles fuera de la interfaz en vivo |
-| Interfaz/eventos | Estados y resultados → vista/historial | No confundir scores con probabilidades ni autorización con apertura |
+| Interfaz/eventos | Estados y resultados → vista/historial | Mostrar el modelo elegido, identidades y acción. Comparar candidatos en el informe |
 
 ## Contratos
 
@@ -32,10 +33,12 @@ Conforme a CONF-02, esta tabla separa responsabilidades conceptuales; no impone 
 
 Antes de emitir una orden se vuelven a comprobar permiso y vigencia. Una desconexión invalida órdenes pendientes; no se reenvían automáticamente al reconectar. La lógica de seguridad no depende de que la interfaz continúe funcionando.
 
+La detección múltiple produce decisiones por región. Actuar cuando al menos una identidad autorizada esté confirmada y la decisión sea inequívoca. Si sale del cuadro la última identidad con permiso, la siguiente decisión deniega. La computadora devuelve la etiqueta y decisión al nodo IoT, que controla la salida y permite observar su efecto.
+
 ## Opciones iniciales
 
-Python y OpenCV ya se utilizan en el diagnóstico; el stack de entrenamiento y la inferencia con pesos siguen pendientes de validación. Framework de interfaz, detector, extractor y transporte al dispositivo se elegirán después de revisar compatibilidad, licencias y rendimiento. No se descargan pesos ni se fijan versiones sin esa revisión.
+Python y OpenCV ya se utilizan en el diagnóstico; la inferencia YuNet/SFace se validó sobre 80 candidatas y el stack de entrenamiento sigue pendiente. Framework de interfaz, detector, extractor y transporte al dispositivo se elegirán después de revisar compatibilidad, licencias y rendimiento. No se descargan pesos ni se fijan versiones sin esa revisión.
 
-Se explorará una representación de características de imagen explicable y, si se elige un extractor preentrenado, su comparación o combinación controlada. La comparación principal de clasificadores fija la representación y las muestras. Los cambios de representación constituyen otro experimento.
+La entrega prioriza características calculadas por el equipo y clasificadores construidos y entrenados por el grupo. La comparación principal fija representación y muestras. SFace y los estimadores ya probados de scikit-learn quedan como referencias internas mientras se desarrolla esa ruta.
 
-Preparación documental de detección/alineación/extracción: [model_verification.md](model_verification.md). La presencia de APIs locales no acredita que los pesos se hayan cargado.
+Preparación documental de detección/alineación/extracción: [model_verification.md](model_verification.md). La adquisición y carga ya se comprobaron en el [informe 07](reports/07_face_pipeline_validation.md); la comparación de representaciones y clasificadores sigue pendiente.

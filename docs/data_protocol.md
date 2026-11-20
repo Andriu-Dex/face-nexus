@@ -6,7 +6,7 @@ Obtener autorización de cada participante antes de capturar. Documentar propós
 
 Capturar las cuatro identidades en sesiones independientes con variación real de iluminación, distancia, posición y orientación moderada. Revisar etiquetas, archivos ilegibles, duplicados, ausencia de rostro, oclusión y rostros múltiples. Registrar exclusiones con motivo y cantidades; no descartar fallos difíciles solo para mejorar resultados.
 
-El volumen inicial y la captura piloto se describen más abajo. Son recomendaciones PROY, no suficiencia demostrada ni exigencias docentes. Congelar el protocolo del experimento principal antes de usar TEST.
+La única pauta vigente para las nuevas capturas está en [Adquisición del dataset definitivo](#adquisición-del-dataset-definitivo--17-11-2026). Los procedimientos fechados del piloto y sus volúmenes anteriores se conservan como antecedentes.
 
 ## Manifiesto privado
 
@@ -36,7 +36,7 @@ Se adopta como base planificada LOCAL-K (las cuatro personas registradas) y LOCA
 
 No se adquiere ningún dataset público en esta fase. La comparación de siete candidatos, licencias, limitaciones y registro público de fuentes está en [02_dataset_research.md](reports/02_dataset_research.md). SFace es el primer candidato a revisión técnica para embeddings; no hay pesos adquiridos ni extractor definitivo. El registro no contiene inventario personal.
 
-## Captura piloto y volumen inicial propuesto
+## Captura piloto y volumen inicial propuesto (antecedente)
 
 Antes de capturar, definir por escrito quién custodia los datos, quién accede, ubicación privada, plazo o evento de eliminación y procedimiento de retiro. El consentimiento debe cubrir captura, procesamiento local y demostración; publicar imágenes o grabar una presentación requiere autorización específica. No comenzar capturas persistentes con esos puntos sin resolver.
 
@@ -48,7 +48,7 @@ Una sesión es un encuentro de captura separado, preferiblemente en distintos d�
 
 Para desconocidos se propone reclutar inicialmente **al menos seis voluntarios externos**, tres asignados solo a VALIDATION y tres solo a TEST, con dos sesiones de 10–20 fotos por voluntario. Es una escala inicial viable, no una muestra suficiente para afirmar seguridad general. Ampliar el número de personas antes que añadir ráfagas de las mismas. Si no hay voluntarios suficientes, registrar la limitación y dejar la evaluación abierta pendiente; no reutilizar identidades entre grupos para aparentar independencia. El piloto puede usar los desconocidos de VALIDATION, nunca los de TEST.
 
-## Procedimiento por sesión
+## Procedimiento por sesión (antecedente del piloto)
 
 1. Comprobar consentimiento y grupo asignado; cerrar sincronizaciones externas no autorizadas. Usar una sola persona en las capturas destinadas a identificación.
 2. Usar exclusivamente la webcam USB TMCAM 8305, con objetivo 1920×1080 a 30 FPS y antiparpadeo previsto de 60 Hz. Verificar resolución y FPS efectivos antes de fijar la configuración; si no es estable, presentar resultados antes de adoptar otra resolución. Registrar resolución efectiva, modelo de cámara y distancia aproximada. La resolución del fotograma no es el tamaño del rostro ni la entrada del extractor.
@@ -59,7 +59,7 @@ Para desconocidos se propone reclutar inicialmente **al menos seis voluntarios e
 
 El recorte y la alineación definitivos se verifican en fase 2. No derivar un requisito de cámara solo de la entrada 112×112 de un modelo. Anotar resolución aparente del rostro en el piloto para definir un criterio de calidad antes del experimento principal.
 
-## Almacenamiento y manifiestos privados
+## Almacenamiento y manifiestos privados (antecedente del piloto)
 
 Usar `/data/` como raíz local excluida, con `raw/`, `processed/`, `features/` y `manifests/`; consentimientos y correspondencia de IDs en `/private/`, con acceso más restringido. Estos nombres son una propuesta de organización, no carpetas creadas con datos. No guardar originales en docs, notebooks ni informes públicos.
 
@@ -69,7 +69,7 @@ Mantener originales inmutables y generar recortes aparte. Conservar copias de se
 
 ## Auditoría previa al entrenamiento
 
-El siguiente es un procedimiento diseñado, todavía sin herramientas implementadas ni ejecuciones. Implementarlo con funciones y un informe sencillo; no hace falta un framework de auditoría.
+La herramienta definitiva comprueba estructura, integridad, duplicados exactos de PNG y coherencia de sesiones. La auditoría del dataset real incluye además los controles manuales y las comprobaciones de representaciones descritas aquí.
 
 | Control | Comprobación propuesta | Acción ante problema |
 | --- | --- | --- |
@@ -89,7 +89,7 @@ Una primera auditoría estructural de TEST puede verificar formato, consentimien
 
 ## Salida de la fase de datos
 
-Antes de declarar el dataset preparado, deben existir consentimientos y custodia definidos, inventario privado versionado, particiones por sesión, ausencia de fugas sin resolver y reporte agregado de cantidades/exclusiones. Registrar el hash del manifiesto congelado sin publicar el manifiesto. La fase actual solo entrega el protocolo y la investigación: aún no hay capturas, auditoría ejecutada ni suficiencia comprobada.
+Antes de declarar el dataset preparado, deben existir consentimientos y custodia definidos, inventario privado versionado, particiones por sesión, ausencia de fugas sin resolver y reporte agregado de cantidades/exclusiones. Registrar el hash del manifiesto congelado sin publicar el manifiesto. La captura y auditoría real del dataset definitivo siguen pendientes.
 
 
 ## Cámara oficial y validación previa — 13-11-2026
@@ -160,3 +160,68 @@ Confirmación del responsable — 14-11-2026: asume la custodia, acepta la elimi
 
 
 Actualización — 14-11-2026: el custodio declara que ya obtuvo consentimiento individual de los cuatro participantes y que están disponibles para el piloto. Se crearon data/private con permisos Windows restringidos a su cuenta, SYSTEM y Administradores, y se verificó exclusión de Git; no se cifraron. La herramienta de captura/auditoría superó la prueba sintética de 80 imágenes, sin acreditar aún calidad de fotos reales. La revisión de consentimientos es responsabilidad local del custodio, no se suben documentos al chat.
+
+
+## Colección externa activa — 17-11-2026
+
+El custodio entregó 11.413 fotogramas de vídeo en almacenamiento externo y confirmó TMCAM 8305 y etiquetas locales. Por su última instrucción se agrupan todos los segmentos de cada persona en una sola S01 de TRAIN/desarrollo, sin certificar cuántos vídeos reales hubo. Se preservan originales y segmento/número de frame. La selección candidata contiene 20 copias por persona. No dividir aleatoriamente en VALIDATION/TEST; hacen falta nuevas sesiones.
+
+Hay resolución real 848×478 para tres IDs y 1280×720 para otro: desviación documentada respecto de 1080p, sin ampliación artificial ni aprobación de calidad facial. Las diez fotos manuales previas siguen separadas. El inventario intermedio por segmentos queda sustituido para asignación de sesiones. Ver [informe 06](reports/06_external_frames.md) para evidencia, ubicación activa y límites. Esta actualización reemplaza el plan de continuar ahora la captura manual de 80 fotos; la guía manual se conserva como herramienta disponible, no como procedencia de la colección externa.
+
+
+## Detección y extracción inicial — 17-11-2026
+
+El responsable autorizó la adquisición exclusiva de YuNet/SFace tras revisión de condiciones y su validación técnica. Se procesaron las 80 candidatas de CURRENT.json sin modificar originales: 73 vectores válidos, siete sin detección con configuración inicial conservada. No se creó VALIDATION/TEST ni se reemplazaron imágenes difíciles. Pesos, detecciones, recortes, embeddings, gráficas y resultados por muestra quedan en almacenamiento privado. El [informe 07](reports/07_face_pipeline_validation.md) registra resultados agregados y revisión visual local; no equivale a aprobación definitiva de etiquetas/calidad, entrenamiento o seguridad de acceso.
+
+## Adquisición del dataset definitivo — 17-11-2026
+
+La revisión del 19-11-2026 conserva esta pauta para las capturas propias. La demostración usará la cámara del nodo IoT. La clasificación humano/no humano necesita ejemplos de esa tarea, y estos se organizan aparte de las cuatro identidades. Con S01 y R01 se podrá evaluar entre encuentros si se confirma que son distintos para cada integrante. La asignación vigente de R01 es TRAIN y se conserva hasta verificar esta condición.
+
+El responsable declara que los cuatro integrantes aceptaron verbalmente en una reunión de Zoom grabada. Antes de las capturas definitivas y de entrenar con fotos anteriores, revisar localmente qué finalidades cubre ese consentimiento. Los [formularios](consent_templates.md) son un apoyo opcional. S01 entra al desarrollo y se podrá incorporar solo a TRAIN según la comparación descrita abajo. P01 continúa como piloto histórico. Los voluntarios requieren su propio consentimiento previo.
+
+**Protocolo de adquisición.** El [informe 08](reports/08_dataset_acquisition.md) recoge la procedencia y las pruebas de la herramienta. Para comparar el aporte de S01, entrenar una versión con las sesiones nuevas de TRAIN y otra con las mismas sesiones más S01. Mantener iguales la representación, el procedimiento de entrenamiento y las sesiones nuevas de VALIDATION. Usar TEST solo después de elegir la configuración. Todo S01 permanece agrupado por integrante y se reserva exclusivamente a TRAIN. El lote auditado de 80 candidatas es el punto inicial para seleccionar fotos de S01.
+
+### Cámara y ensayo operativo
+
+1. Antes de cada ronda y de guardar imágenes, confirmar el alcance del consentimiento, la asignación y el destino privado cifrado. Reidentificar la TMCAM 8305 al conectarla y registrar modelo, nombre de dispositivo y backend. Solicitar DirectShow/MJPG, 1920×1080 y 30 FPS. Medir la entrega durante un minuto tras cinco segundos de calentamiento, con una escena sin personas y sin guardar fotogramas. Registrar modo solicitado y informado, tamaño recibido, FPS efectivos y errores. El [diagnóstico previo](reports/03_camera_diagnostic.md) obtuvo 29,241 FPS medios en diez minutos a 1080p.
+2. Si llega una resolución distinta, aparecen fallos de lectura o la entrega cae de forma sostenida frente al diagnóstico previo, detener la adquisición y registrar la incidencia. Confirmar el ajuste de 60 Hz en el controlador si está disponible y revisar bandas visibles bajo cada luz prevista. Registrar ambos resultados por separado, con estado pendiente cuando el controlador no permita verificarlo. Repetir la comprobación si cambia la conexión o el modo.
+3. Tras recibir autorización expresa de captura, hacer una primera sesión guiada de 20 tomas nominales por integrante y revisar el resultado antes de continuar con las demás. Puede contar como la primera sesión TRAIN de cada persona si se mantiene la pauta, hay trazabilidad completa y pasa la auditoría. Si se cambia la pauta o falla la auditoría, conservar la sesión como desarrollo exploratorio y programar otra TRAIN. Usar la [herramienta definitiva](pilot_capture.md#herramienta-del-dataset-definitivo) con su propio plan y destino.
+
+### Pauta común de captura
+
+Montar la cámara aproximadamente a la altura de los ojos, con una sola persona en cuadro y un punto de referencia a 0,8 m. Usar dos bloques de diez tomas, uno con luz frontal difusa y otro con luz lateral moderada. Usar condiciones comparables en las cuatro personas y cambiar el orden de los bloques entre rondas. Evitar un fondo exclusivo por identidad. Tras cada toma, dejar al menos dos segundos y cambiar la pose o recolocarse. Guardar PNG del fotograma recibido, sin recortar ni reescalar el original. Registrar cualquier ajuste que se deba hacer por encuadre u óptica.
+
+| Tomas por bloque | Pauta orientativa |
+| --- | --- |
+| 2 | Frontal neutra y frontal con sonrisa natural a la distancia de referencia |
+| 2 | Giro horizontal aproximado de 20° a izquierda y derecha |
+| 2 | Inclinación vertical leve, unos 10° arriba y abajo |
+| 2 | Frontal a distancias aproximadas de 0,6 y 1,2 m, con rostro completo |
+| 2 | Giro lento y recolocación natural, con una captura por movimiento |
+
+Definir antes de cada ronda los casos difíciles que se quieran ensayar, por ejemplo perfil pronunciado o contraluz. Marcarlos como `difficult`, fuera de las 20 tomas nominales y dentro de la misma partición que su sesión. Conservar los fallos válidos del detector tanto en condiciones nominales como difíciles. Si una toma se repite por una incidencia de captura, registrar original, motivo y reemplazo, y contabilizar el intento. Reportar cantidades por persona, sesión, condición y resultado.
+
+### Asignación y reserva de sesiones
+
+Una ronda reúne un encuentro por integrante. Asignar la misma partición a toda la ronda y programar rondas en días o momentos separados, con cambio real de hora, entorno o montaje documentado. Un nuevo archivo, una pausa breve o reiniciar la cámara durante el mismo encuentro conserva el ID de sesión. Las nuevas capturas pueden hacerse con vídeos de la TMCAM a 1920×1080 y objetivo de 30 FPS. Guardar por integrante y encuentro en carpetas nuevas del volumen cifrado, conservar el archivo fuente y registrar su hash, el modo de captura y la exportación. Seleccionar tomas variadas, sin redimensionar el original. Todo derivado y toda toma del encuentro heredan su partición.
+
+| Grupo | TRAIN | VALIDATION | TEST | Tomas nominales previstas |
+| --- | --- | --- | --- | ---: |
+| K01–K04 | 3 sesiones por persona | 1 sesión por persona | 2 sesiones por persona | 480 con 6 sesiones por persona |
+| U01–U03 | — | 2 sesiones por persona | — | 120 |
+| U04–U06 | — | — | 2 sesiones por persona | 120 |
+
+La planificación inicial suma 720 tomas nominales. Se priorizan diversidad de personas, sesiones independientes y cobertura de condiciones. La cantidad de fotogramas por sí sola no acredita suficiencia. Antes de iniciar la selección y calibración de modelos, el custodio decidirá si añadir una segunda ronda VALIDATION para conocidos. Si se aprueba, añadiría 80 tomas nominales y permitiría dedicar rondas distintas a selección y calibración.
+
+Usar con los voluntarios la misma cámara y pauta nominal, con consentimiento individual y seudónimos estables. Los IDs U son independientes de las cuatro identidades registradas y están asignados a un solo grupo antes de capturar. Si faltan voluntarios, registrar los grupos realmente disponibles y dejar pendiente la evaluación abierta que no pueda ejecutarse. Reservar TEST bajo custodia, con auditoría de inventario e integridad antes de su uso y acceso para evaluación solo al congelar el pipeline y la política de rechazo.
+
+### Nombres, ficha y auditoría
+
+- Usar un ID de sesión por encuentro, por ejemplo `K01_S02`, y un ID por intento, por ejemplo `K01_S02_A000001.png`. El plan preasigna ronda, identidad y partición. Cada sesión guarda una copia de su asignación. Mantener rutas, correspondencias y referencias a consentimientos en almacenamiento privado.
+- **Ficha de sesión:** ID de sesión, ronda, seudónimo, partición, fecha y hora con zona, montaje y cambios respecto de otras sesiones, fondo, luces, cámara y backend/formato, resolución y FPS solicitados/medidos, duración del diagnóstico, fallos, estado de 60 Hz y referencia privada al consentimiento.
+- **Ficha de toma:** ID, sesión, instante, número de intento, luz, distancia aproximada, pose, expresión, movimiento, condición nominal o difícil, origen foto/vídeo, ruta relativa privada, SHA-256, calidad, estado y motivo de repetición/exclusión. Usar campos vacíos explícitos si un valor no se midió.
+- Auditar archivos, hashes, cobertura por persona y condición, duplicados y procedencia compartida. Detener la congelación del manifiesto si hay una sesión o fuente compartida entre particiones. Separar las incidencias de adquisición de los fallos válidos de detección; estos últimos cuentan en evaluación de extremo a extremo.
+
+### Protección del almacenamiento definitivo
+
+Usar una carpeta NTFS restringida dentro de un contenedor VeraCrypt local. El custodio controla el montaje y conserva las credenciales de recuperación fuera del contenedor, de Git y del chat. El volumen protege en reposo originales, recortes, embeddings, manifiestos, consentimientos y sus respaldos autorizados. Mientras está montado, se aplican permisos de la cuenta del custodio, SYSTEM y Administradores. Mantener archivos temporales y derivados dentro del volumen. Desmontar tras el uso y conservar el plazo de eliminación acordado. La [guía de preparación y verificación](vault_and_camera_setup.md) describe la instalación, el ensayo sin personas y la copia verificable. La captura real requiere autorización expresa posterior.

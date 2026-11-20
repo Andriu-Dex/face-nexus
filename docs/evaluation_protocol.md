@@ -10,6 +10,8 @@ Elegir hiperparámetros y modelo con TRAIN/VALIDATION. Si se utiliza validación
 
 ## Identificación cerrada
 
+Desde la aclaración del 19-11-2026, evaluar por separado el clasificador humano/no humano con ejemplos positivos y negativos y la identificación de los cuatro integrantes con muestras conocidas. En la entrega, reportar la exactitud de los candidatos y justificar el modelo elegido. El mismo conjunto de evaluación se aplica a los candidatos de cada tarea.
+
 Para cada modelo reportar exactitud, precisión/recall/F1 por identidad, macro-F1 y matriz 4×4 con ejes y soportes. Mostrar TRAIN y VALIDATION diferenciados y TEST al final. Esta evaluación mide la clasificación candidata de conocidos antes del rechazo.
 
 ## Rechazo y autorización
@@ -35,6 +37,8 @@ Definir un intento como una presentación delimitada con inicio, fin y una decis
 Medir entrenamiento, inferencia del clasificador, pipeline de reconocimiento y tiempo hasta confirmación física por separado. Usar reloj monotónico; indicar equipo, cámara, resolución, versiones, calentamiento, cantidad de ensayos, mediana y p95. Reportar FPS procesados y descartes de fotogramas, no solo FPS de visualización.
 
 Probar identidad con permiso, sin permiso, desconocido, ausencia/multiplicidad de rostros, condiciones nuevas, fallo de cámara/modelo, revocación, desconexión y repetición de órdenes. Ensayar presentaciones mediante fotografía/vídeo con consentimiento y describir resultados; si falta detección de vida, declarar la vulnerabilidad. No inferir seguridad física de la accuracy.
+
+El responsable aprobó un ensayo en vivo con el modelo y la política congelados. Registrar un resultado por intento, con recuentos de aciertos, rechazos correctos, rechazos indebidos e identificaciones incorrectas. Para el nodo IoT, registrar también si la acción esperada se observó físicamente.
 
 ## Selección y evidencia
 

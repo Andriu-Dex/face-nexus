@@ -80,3 +80,38 @@ La aprobación del protocolo piloto es una decisión diferente del consentimient
 ## Cambio de método propuesto — 14-11-2026
 
 El responsable propone grabar vídeos por participante y seleccionar fotogramas mediante software local, con destino privado C:/Downloads/FaceNexus/data. La alternativa está en revisión; no se han movido datos ni adoptado automáticamente un protocolo nuevo. La sesión manual se detuvo preservando 10 fotos K01/P01, verificadas estructuralmente, y cero de K02–K04. No se borran ni se consideran una sesión completa. Si se repite vídeo en el mismo encuentro, fotos y vídeo pertenecen al mismo grupo de sesión; no se dividen entre TRAIN/VALIDATION/TEST.
+
+## Agrupación de colección externa — 17-11-2026
+
+- D-28: prevalece la última aclaración del responsable: todos los segmentos de cada identidad se agrupan en S01/TRAIN por criterio conservador. La respuesta anterior acerca de segmentos independientes no se usa para particiones; no se afirma cantidad de vídeos reales comprobada.
+- D-29: originales externos intactos; manifiesto de 11.413 frames y selección candidata de 80 copias con IDs, segmento y hashes privados. Colección activa identificada por _prepared/CURRENT.json; inventario intermedio sustituido para sesiones.
+- D-30: resoluciones reales inferiores y diferentes de la configuración objetivo; no reescalar ni afirmar 1080p. No hay TEST/VALIDATION independientes, desconocidos o detección facial evaluados. Revisar candidatas antes de desarrollar extracción; planificar nuevas sesiones para evaluación.
+
+Evidencia y limitaciones en [06_external_frames.md](reports/06_external_frames.md). No se movieron ni borraron originales, ni se mezclaron automáticamente las diez fotos manuales previas.
+
+## Validación facial — 17-11-2026
+
+- D-31: el responsable aprueba instruction.md junto a las precisiones profesionales: licencia/hash de dos pesos concretos, revisión visual, separación de etapas, resultados exploratorios sin umbral ni generalización. Se autoriza adquisición/ejecución únicamente para este alcance; sin commits ni publicación.
+- D-32: pesos fijados a revisión OpenCV Zoo 48b10fa505aeb51fbd127fc60a5c660040e823b7; verificación local contra punteros LFS. Licencias de carpetas MIT (YuNet) y Apache 2.0 (SFace), avisos conservados en models/verified excluido.
+- D-33: CPU/un hilo, lado máximo de detector 640 sin ampliar, score 0,9/NMS 0,3; geometría devuelta al original, alignCrop 112×112, SFace 128 float32 observado. Parámetros no ajustados para ocultar fallos.
+- D-34: 73/80 embeddings válidos; siete sin detección y ningún caso múltiple en la colección. Revisión de láminas local realizada, sin sustituir ni eliminar. Check real controlado con dos caras produjo multiple_faces y sin vector.
+- D-35: coseno intra/inter exploratorio con solapamiento, sin umbral final ni accuracy. Mantener baseline técnico y planificar nuevas sesiones/unknown; las resoluciones están confundidas con identidad/condiciones y no permiten inferencia causal.
+
+Resultados, tiempos, pruebas y archivos en [07_face_pipeline_validation.md](reports/07_face_pipeline_validation.md). No se conectó webcam/actuador ni se entrenó durante esta etapa. El primer lote es antecedente; el resultado privado principal se identifica con sufijo verified y conserva los originales.
+
+## Preparación del dataset definitivo — 17-11-2026
+
+- D-36: la TMCAM 8305 es la fuente declarada por el custodio para los 13 segmentos. La evidencia disponible verifica los PNG y su agrupación por identidad, con resolución de grabación y exportación pendientes. S01 conserva su etiqueta histórica TRAIN en desarrollo exploratorio, fuera del dataset definitivo.
+- D-37: el responsable aprobó preparar el protocolo y revisar la procedencia. La pauta operativa, el calendario, una posible segunda ronda VALIDATION y la asignación de desconocidos se presentan para aprobación antes de iniciar capturas. La primera ronda se auditará antes de ampliar y solo podrá contarse como TRAIN si cumple la pauta definitiva.
+- D-38: se mantiene YuNet + SFace como baseline. La comparación futura exige verificar el peso exacto del segundo extractor y usar las mismas particiones; TEST queda reservado hasta congelar la configuración. Ver [informe 08](reports/08_dataset_acquisition.md).
+- D-39: pauta de adquisición aprobada para preparación técnica. El protocolo de datos es la referencia operativa única. La segunda ronda VALIDATION para conocidos se decide antes de la selección y calibración. Guardar fotos nuevas requiere autorización expresa.
+- D-40: VeraCrypt con NTFS es la solución de almacenamiento preparada para el entorno Windows 11 Home. El cifrado de C: permanece sin verificar. Ubicación, credenciales, montaje y posible migración histórica quedan pendientes de comprobación y acuerdo con el custodio.
+- D-41: la nueva herramienta valida sesiones y rondas preasignadas y registra intentos en carpetas que publican foto y ficha juntas. La comprobación de cámara de cada ronda se ejecuta sin guardar fotogramas. La prueba sintética preserva los datos y las herramientas históricas.
+- D-42: el responsable aprobó preparar VeraCrypt en `C:\Downloads\FaceNexus` y conservar la credencial en privado. Instalador 1.26.31 descargado y verificado. La [guía operativa](vault_and_camera_setup.md) documenta el estado de montaje, verificación histórica y validación sin personas. El resultado operativo y la autorización de captura real siguen pendientes.
+
+## Aclaraciones de clase — 19-11-2026
+
+- D-43: el IoT de la demostración captura, envía a la computadora y actúa según la etiqueta devuelta. La TMCAM sigue siendo la referencia de desarrollo. Se propone ESP32 con cámara y una tira LED, pendientes de confirmar según disponibilidad.
+- D-44: tratar cada rostro en escenas grupales. Una identidad autorizada confirmada basta para actuar; la ambigüedad que impida confirmar autorización produce denegación.
+- D-45: separar humano/no humano del reconocimiento de los cuatro integrantes. Construir y entrenar los modelos de entrega. Conservar SFace y los clasificadores de biblioteca actuales como referencias de desarrollo. Demostrar un modelo, con la comparación y la interfaz descritas en el informe.
+- D-46: con las imágenes disponibles, considerar S01 para ajuste y R01 para validación entre encuentros si se verifica su independencia. La asignación de los archivos privados queda pendiente de esa comprobación. Un ensayo en vivo congelado puede completar la evidencia práctica.

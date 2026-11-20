@@ -2,7 +2,9 @@
 
 ## Condición de entrega
 
-El dispositivo físico es obligatorio (CONF-01). Su tipo, mecanismo y componentes están pendientes. El simulador inicial permite desarrollar y probar decisiones; no sustituye la demostración física final.
+El dispositivo físico es obligatorio (CONF-01). En la demostración, el nodo IoT captura una imagen, la envía a la computadora, recibe la etiqueta y actúa según la respuesta (PROF-06). Se propone probar un ESP32 con cámara y una salida observable como una tira LED. El equipo y la salida siguen pendientes de confirmación. El simulador sirve para probar decisiones.
+
+El responsable propuso también un SG90 para mover un pestillo de maqueta. Es una salida candidata. La placa exacta, la cámara, la alimentación y el esfuerzo del pestillo se comprobarán en banco.
 
 ## Selección antes de comprar o conectar
 
@@ -21,8 +23,8 @@ Distinguir orden enviada, recepción confirmada y posición física confirmada. 
 1. Probar contrato con controlador simulado y errores inyectados, sin actuador.
 2. Revisar montaje y probar comunicación sin carga de apertura.
 3. Verificar alimentación y mecanismo en banco supervisado.
-4. Ejecutar una apertura autorizada acotada y comprobar retorno al estado previsto.
-5. Comprobar que desconocidos, permiso inactivo, errores y órdenes caducadas no producen apertura.
+4. Capturar en el nodo, enviar a la computadora, recibir la etiqueta y ejecutar una acción autorizada acotada. Comprobar el efecto y el retorno al estado previsto.
+5. Comprobar escenas con varios integrantes y escenas mixtas, así como denegación cuando falte una identidad autorizada, haya un error o caduque la orden.
 6. Probar pérdida de comunicación, reinicio y reconexión sin aperturas espontáneas.
 
 Registrar configuración/versiones, caso, resultado esperado, observación real y limitaciones. No se exige grabar rostros como evidencia. No declarar fase completada sin ejecutar el hardware real.

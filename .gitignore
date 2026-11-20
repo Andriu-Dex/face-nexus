@@ -5,6 +5,7 @@
 /private/
 /outputs/
 /docs/transcription.md
+/docs/transcriptions/
 .env
 .env.*
 !.env.example
@@ -27,3 +28,20 @@ htmlcov/
 
 # Archivos varios
 instruction.md
+informe_facenexus
+
+# Archivos de LaTeX
+*.out
+*.aux
+*.log
+*.gz
+*.pdf
+*.ptx
+*.synctex.gz
+*.synctex.gz
+*.lot
+*.fls
+*.synctex.gz
+*.synctex.gz
+*.toc
+*.fdb_latexmk
