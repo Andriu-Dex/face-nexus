@@ -40,15 +40,23 @@ def validate_embedding(vector, expected_dimension=128):
     return vector, norm
 
 
+def verified_model_path(folder, name):
+    _, filename, size, digest, _ = MODELS[name]
+    path = Path(folder) / filename
+    if path.stat().st_size != size or sha256(path) != digest:
+        raise ValueError("Peso ausente, modificado o no verificado.")
+    return path
+
+
+def load_detector(folder):
+    path = verified_model_path(folder, "yunet")
+    return cv2.FaceDetectorYN.create(str(path), "", (320, 320), .9, .3, 5000,
+                                     cv2.dnn.DNN_BACKEND_OPENCV, cv2.dnn.DNN_TARGET_CPU)
+
+
 def load_models(folder):
-    folder = Path(folder)
-    for _, (_, filename, size, digest, _) in MODELS.items():
-        path = folder / filename
-        if path.stat().st_size != size or sha256(path) != digest:
-            raise ValueError("Peso ausente, modificado o no verificado.")
-    detector = cv2.FaceDetectorYN.create(str(folder / MODELS["yunet"][1]), "", (320, 320),
-                                       .9, .3, 5000, cv2.dnn.DNN_BACKEND_OPENCV, cv2.dnn.DNN_TARGET_CPU)
-    extractor = cv2.FaceRecognizerSF.create(str(folder / MODELS["sface"][1]), "",
+    detector = load_detector(folder)
+    extractor = cv2.FaceRecognizerSF.create(str(verified_model_path(folder, "sface")), "",
                                           cv2.dnn.DNN_BACKEND_OPENCV, cv2.dnn.DNN_TARGET_CPU)
     return detector, extractor
 
