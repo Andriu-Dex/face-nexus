@@ -1,6 +1,6 @@
 # Plan de implementación
 
-Actualizado el 19-11-2026 con las [aclaraciones de clase](source_analysis.md#aclaraciones-de-la-clase-del-19-de-noviembre). El volumen cifrado y la TMCAM ya se verificaron. Están auditados S01 y R01, y el código de comparación de referencia se probó con datos sintéticos. El nodo IoT, los modelos propios y la demostración con varias personas pasan a ser prioridades.
+Configuración de entrega confirmada: celular como fuente de video, Windows para procesar, ESP-WROOM-32 por USB serie y SG90 para el pestillo. El volumen cifrado y la TMCAM de desarrollo se verificaron. Están auditados S01 y R01 y el código de comparación de referencia se probó con datos sintéticos.
 
 Cada fase requiere plan breve de archivos, trabajo acotado, comprobaciones disponibles, inspección de resultados y registro de evidencia antes de preparar un commit. No publicar ramas ni cambios remotos sin autorización. Priorizar claridad y defensa del código (CONF-02).
 
@@ -9,8 +9,8 @@ Cada fase requiere plan breve de archivos, trabajo acotado, comprobaciones dispo
 | 1. Preparación y auditoría del dataset | Investigación de fuentes, consentimiento, captura piloto, manifiesto y particiones; protocolo en data_protocol.md | Datos propios autorizados, grupos de desconocidos disjuntos y auditoría ejecutada sin fugas pendientes |
 | 2. Detección y procesamiento facial | Detector, recortes, alineación y calidad; comprobar piloto antes de captura definitiva | Configuración explicada, archivos/rostros utilizables y fallos registrados |
 | 3. Extracción y comparación de características | Representación propia, preentrenada y combinación bajo experimento acotado; entrenamiento preliminar con referencia fija | Comparación en VALIDATION, versiones/dimensiones y procedencia verificadas |
-| 4. Entrenamiento y evaluación de clasificadores | Comparación principal SVM/RF/k-NN/MLP con entradas comunes; candidatos adicionales solo si se justifica | Configuraciones elegidas con TRAIN/VALIDATION; TEST aún reservado |
-| 5. Reconocimiento en tiempo real y rechazo | Calibración offline con VALIDATION, regla temporal, cámara y latencias | Modelo, preparación y rechazo congelados; evaluación TEST offline y en vivo con sesiones/intentos reservados, sin ajustes posteriores |
+| 4. Entrenamiento y evaluación de clasificadores | Comparar k-NN, MLP y SVM lineal multiclase con HOG y entradas comunes. Entrenar una CNN binaria pequeña para humano/no humano | Configuraciones elegidas con TRAIN/VALIDATION y evidencia separada para ambas tareas |
+| 5. Reconocimiento en tiempo real y rechazo | Calibración con R01 y desconocidos del grupo A grabados con el celular, regla temporal y cámara | Modelo, preparación y rechazo congelados antes del ensayo final en vivo con el grupo B |
 | 6. Sistema de autorización | Integrar identidad, permisos e interfaz con controlador simulado | Revocación sin reentrenar, denegaciones y estados de ejecución comprobados |
 | 7. Integración y pruebas con dispositivo físico | Adaptador y pruebas de apertura, denegación, repetición, desconexión y reconexión; cierre de informe | Orden transmitida y acción efectiva comprobada; limitaciones y todos los resultados reales documentados |
 
@@ -18,7 +18,7 @@ La fase 1 empieza con protocolo y piloto; se coordina con fase 2 antes de captur
 
 La lógica sencilla de permisos y el contrato de controlador se definen y prueban desde el inicio con datos simulados, aunque su integración completa sea fase 6. Los casos de acceso físico se ensayan en fase 7 con intentos reservados; no sustituyen la evaluación del reconocimiento ni justifican retocar un TEST ya consumido. Si se necesitan cambios tras TEST, declarar la evaluación de desarrollo y obtener nuevas sesiones para una evaluación final independiente.
 
-La selección del dispositivo avanza en paralelo desde las primeras fases; el montaje con actuador queda para fase 7. Sigue pendiente el dispositivo concreto. CONF-01 exige reconocer las cuatro personas, verificar permisos, transmitir una orden válida y comprobar su ejecución física. No basta un mensaje de recepción.
+El contrato serie se puede implementar desde el inicio con un controlador simulado. El montaje con el SG90 se realiza en la fase 7. CONF-01 exige reconocer a los cuatro integrantes, verificar sus permisos, transmitir una orden válida y observar el movimiento del pestillo.
 
 ## Registro de evidencias
 
@@ -28,17 +28,27 @@ Anotar fecha, requisito, versión/configuración, comando o procedimiento, resul
 
 ### Prioridades para la demostración
 
-1. Confirmar qué nodo con cámara tiene disponible el equipo y comprobar pronto el ciclo captura → computadora → respuesta → acción observable. La tira LED es una opción de salida física aceptada en clase.
-2. Preparar la clasificación humano/no humano con ejemplos adecuados para esa tarea y entrenar los modelos de entrega. Usar una representación facial explicable para comparar candidatos. Conservar YuNet para localización/recorte y usar SFace y el código actual como referencia interna.
-3. Confirmar que S01 y R01 son encuentros distintos para cada integrante. Si se confirma, usar S01 para ajuste y considerar R01 para una evaluación entre encuentros con los datos disponibles. Mantener asignaciones y resultados explícitos. Un ensayo en vivo con el modelo congelado aporta evidencia adicional sin requerir otro lote de fotografías almacenadas.
+1. Implementar el contrato de salida con un controlador simulado, preparar la lectura del stream y verificar la comunicación serie sin carga. Probar en banco el recorrido celular → Windows → ESP-WROOM-32 → SG90.
+2. Construir HOG + k-NN primero, después MLP y SVM lineal multiclase con la misma entrada. Entrenar aparte la CNN binaria pequeña con positivos y negativos adecuados a esa tarea. Usar YuNet para localización y recorte. Conservar SFace y el código anterior como referencias internas.
+3. Usar S01 para ajustar y R01 para la validación exploratoria entre encuentros. El responsable confirmó que son dos días distintos, con grabaciones individuales en cada jornada. Fijar las asignaciones en el manifiesto del experimento antes de entrenar. Un ensayo en vivo con el modelo congelado aporta evidencia adicional sin requerir otro lote de fotografías almacenadas.
 4. Ensayar una persona autorizada, varias autorizadas, una autorizada con desconocidos, solo desconocidos y la salida de la última persona autorizada. Presentar el modelo elegido y documentar en el informe la exactitud de los candidatos y la interfaz.
+
+### Cierre del informe LaTeX
+
+Usar la plantilla local de `docs/informe_facenexus/`. Completar el informe con la arquitectura implementada, las muestras y particiones efectivamente usadas, la exactitud y matriz de confusión de cada candidato, la elección del modelo, la interfaz y el ensayo en vivo. Registrar aciertos, rechazos correctos, aceptaciones indebidas y acciones físicas observadas. Cerrar y compilar el informe tras ejecutar las pruebas. Las tablas del informe deben llevar resultados observados y los denominadores de cada métrica.
 
 ### Preparación técnica ya realizada
 
-La [preparación de la comparación](reports/09_classifier_preparation.md) permite verificar los cuatro clasificadores con datos sintéticos y preparar los lotes de fotogramas de las nuevas grabaciones. La comparación real sigue pendiente de sesiones independientes.
+La [referencia HOG + k-NN](reports/10_hog_knn_baseline.md) alcanzó 52 aciertos en 72 fotogramas usables de R01. MLP y SVM lineal lograron 57 de 72 cada uno con los mismos vectores. La SVM pasa primero a calibración por su mayor recall mínimo por persona y su menor latencia frente a MLP. La selección final requiere medir rechazo y aceptaciones indebidas. [Comparación de clasificadores](reports/11_hog_classifier_comparison.md)
+
+El [piloto de calibración del rechazo](reports/12_hog_rejection_calibration.md) midió el solapamiento de márgenes en R01. El registro de presentaciones con el celular está preparado para medir los intentos de los integrantes y del grupo A.
 
 Completar la [evaluación de impacto](biometric_impact_assessment.md) para el único flujo de acceso por reconocimiento facial y verificar localmente el alcance del consentimiento verbal grabado antes de la adquisición. Confirmar los datos de contacto del responsable. Los [formularios](consent_templates.md) quedan disponibles como apoyo opcional.
 
 La revisión local y el primer pipeline de las 80 candidatas se ejecutaron; ver [informe 07](reports/07_face_pipeline_validation.md): 73 embeddings válidos y siete sin detección, con fallos preservados y similitudes exploratorias solapadas. Se autorizaron únicamente los pesos concretos de YuNet y SFace y permanecen privados/verificados.
 
-El volumen VeraCrypt superó el remontaje y la comprobación del SHA-256 de prueba. La TMCAM superó el diagnóstico operativo de R01. El [primer lote de TRAIN](reports/09_classifier_preparation.md#primer-lote-de-train) produjo 72 embeddings válidos. Los resultados de R01 se conservan con su asignación histórica mientras se confirma el plan de evaluación entre encuentros.
+El volumen VeraCrypt superó el remontaje y la comprobación del SHA-256 de prueba. La TMCAM superó el diagnóstico operativo de R01. El [lote R01 preparado inicialmente para TRAIN](reports/09_classifier_preparation.md#primer-lote-de-train) produjo 72 embeddings válidos. El registro original se conserva y su uso como validación exploratoria quedará en el manifiesto del experimento.
+
+El manifiesto privado de HOG registra 80 tomas de S01 para TRAIN y 80 de R01 para VALIDATION, con hashes verificados y sin imágenes idénticas entre los lotes. En el banco serie, el ESP32 respondió como se esperaba a 11 tramas en cada una de dos rondas por COM5, con el SG90 desconectado. [Resultado del ensayo de banco](hardware_protocol.md#ensayo-de-banco-del-protocolo-facenexus)
+
+Se comprobó el recorrido celular → Windows → ESP32 en dos rondas con una escena sin personas. Windows procesó cinco fotogramas de 1920 × 1080 por ronda y el ESP32 confirmó ambas denegaciones de banco. [Prueba con el celular](hardware_protocol.md#video-local-y-decisión-de-banco)

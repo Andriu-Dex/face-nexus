@@ -45,3 +45,5 @@ La ruta de S01 es un ejemplo para el archivo histórico una vez disponible dentr
 El 19-11-2026 se copiaron al volumen cifrado los cuatro MP4 de R01 y 20 fotogramas espaciados por integrante, con SHA-256 verificado contra los archivos entregados. Tres vídeos son de 1920×1080 y uno es de 848×478. El responsable aprobó usar este último para TRAIN exploratorio a su resolución nativa. La opción `--allow-848x478` se aplicó únicamente a ese lote de TRAIN. VALIDATION conserva el requisito de 1920×1080.
 
 Hubo 72 embeddings válidos de 80 tomas. Se conservaron los ocho casos sin detección en el registro privado. El lote queda disponible para compararlo con y sin S01 cuando lleguen las sesiones de VALIDATION. La resolución y la identidad siguen asociadas en R01 y deben considerarse al interpretar los resultados por persona.
+
+**Uso vigente de R01.** La etiqueta TRAIN de esta sección describe la preparación inicial. Para la comparación HOG se confirmó que R01 procede del segundo día y se usó como validación exploratoria. S01 fue el único lote de entrenamiento. [Comparación efectivamente realizada](11_hog_classifier_comparison.md)

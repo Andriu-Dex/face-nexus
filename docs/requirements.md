@@ -15,15 +15,16 @@ Las referencias de origen se encuentran en [source_analysis.md](source_analysis.
 | PROF-03 | Probar varios clasificadores, mostrar exactitudes y pruebas y justificar la elección | Informe reproducible de comparación |
 | PROF-04 | Construir y entrenar los modelos presentados. Se permiten bibliotecas para definir el modelo y herramientas preentrenadas para el recorte | Explicación de características propias, arquitectura y entrenamiento |
 | PROF-05 | Distinguir humano/no humano antes de reconocer a los integrantes | Pruebas con ejemplos positivos y negativos distintos de los usados para entrenar |
-| PROF-06 | El nodo IoT captura, envía la imagen a la computadora, recibe la etiqueta y actúa | Demostración de la cadena completa en hardware |
+| PROF-06 | Demostrar la cadena de captura, reconocimiento y acción física mediante IoT | El celular entrega la imagen a Windows, el ESP32 recibe la decisión y se observa la acción del pestillo |
 | PROF-07 | Reconocer en escenas con varias personas y actuar cuando haya al menos una identidad autorizada confirmada | Casos individuales, varios integrantes, desconocidos y mezcla |
-| CONF-03 | Usar TMCAM 8305 como referencia de captura del dataset y desarrollo local | Resolución, entrega efectiva y parpadeo documentados. La entrada de la demostración se valida con la cámara del nodo IoT según PROF-06. |
+| CONF-03 | Usar la TMCAM 8305 para el dataset y el desarrollo local | Resolución, entrega efectiva y parpadeo documentados |
+| CONF-04 | Capturar con el celular, procesar en Windows y accionar el pestillo mediante el ESP-WROOM-32 y el SG90 | Un ensayo muestra imagen del celular, decisión de FaceNexus y apertura física cuando se autoriza |
 | CONF-02 | Priorizar código sencillo de entender, explicar y defender sobre patrones y convenciones que compliquen la solución | Revisión del flujo y explicación de cada operación; conservar corrección experimental y denegación ante fallos |
 | CONF-01 | Integrar obligatoriamente un dispositivo físico de acceso en la entrega final | Apertura real autorizada y denegación verificadas con el hardware |
 | CLASE-01 | Organizar y explicar las etapas de adquisición a postprocesamiento | Correspondencia entre módulos y memoria técnica |
 | CLASE-02 | Distinguir entrenamiento, validación y prueba; estudiar generalización | Particiones y resultados separados |
 | PROY-01 | Identificar cuatro participantes mediante cámara en tiempo real | Ensayos en sesiones nuevas para cada identidad |
-| PROY-02 | Comparar SVM, Random Forest, k-NN y ANN/MLP | Mismas muestras y particiones para los cuatro |
+| PROY-02 | Comparar k-NN propio en NumPy, MLP y SVM lineal multiclase con la misma representación HOG | Misma asignación de muestras y exactitud por modelo en el informe |
 | PROY-03 | Rechazar desconocidos e incertidumbre mediante política calibrada | Pruebas con desconocidos reservados y rechazos medidos |
 | PROY-04 | Separar identidad, permiso, autorización y ejecución física | Revocar permiso sin reentrenar; registrar resultado real |
 | PROY-05 | Denegar ante ausencia de una identidad autorizada confirmada, ambigüedad que impida decidir, fallo de cámara/modelo o excepción | Incluir escenas mixtas y grupos sin ninguna identidad autorizada |
@@ -33,13 +34,13 @@ Las referencias de origen se encuentran en [source_analysis.md](source_analysis.
 
 ## Flujo esperado
 
-Nodo IoT con cámara → computadora → detección y clasificación humano/no humano → características propias y reconocimiento por rostro → consulta de permiso → etiqueta y decisión de vuelta al nodo → acción física observada o fallo.
+Celular por red local → FaceNexus en Windows → clasificación humano/no humano y localización de rostros → características propias y reconocimiento por rostro → consulta de permiso → etiqueta y decisión al ESP-WROOM-32 por USB serie → movimiento del pestillo por el SG90.
 
 `GRANTED` expresa autorización; no prueba que el dispositivo se abrió. La interfaz debe distinguir ambos estados. Un fallo nunca genera una orden de apertura.
 
 ## Alcance de entrega
 
-Se requieren cuatro identidades, comparación experimental, rechazo de desconocidos, inferencia en vivo y acceso físico verificado. El dispositivo y el mecanismo concreto siguen pendientes de selección. Un simulador permite probar el contrato durante las fases iniciales, pero no completa CONF-01.
+Se requieren cuatro identidades, comparación experimental, rechazo de desconocidos, inferencia en vivo y acceso físico verificado. El montaje de entrega usa el ESP-WROOM-32, el SG90 y un pestillo de maqueta. El simulador se utiliza durante las primeras pruebas de software.
 
 La entrega demuestra un modelo elegido y una acción física en un entorno controlado. Probar ejemplos presentados en cámara sin atribuir detección de vida al clasificador humano/no humano.
 

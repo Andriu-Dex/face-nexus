@@ -34,7 +34,9 @@ Definir plazo y responsable antes de capturar. Un retiro implica localizar y eli
 
 Se adopta como base planificada LOCAL-K (las cuatro personas registradas) y LOCAL-U (voluntarios externos con consentimiento). Una persona registrada puede tener permiso activo o inactivo: el permiso no es la etiqueta de entrenamiento. Los IDs son seudónimos, no anonimizan fotografías o vectores faciales.
 
-No se adquiere ningún dataset público en esta fase. La comparación de siete candidatos, licencias, limitaciones y registro público de fuentes está en [02_dataset_research.md](reports/02_dataset_research.md). SFace es el primer candidato a revisión técnica para embeddings; no hay pesos adquiridos ni extractor definitivo. El registro no contiene inventario personal.
+La comparación HOG de las cuatro identidades usa las capturas propias de S01 y R01. HOG calcula características directamente y carece de una etapa de preentrenamiento. Los datasets públicos a gran escala tendrían sentido en un experimento aparte para entrenar un extractor profundo general. FaceNexus ya dispone de SFace preentrenado y verificado como referencia para ese experimento.
+
+Para la tarea humano/no humano, se puede evaluar un conjunto público acotado con ejemplos pertinentes y condiciones de uso verificadas. Los recuentos de desconocidos para calibración y prueba se obtendrán con personas distintas y la cámara de la demostración. [Fuentes estudiadas](reports/02_dataset_research.md) · [Pesos verificados](model_verification.md)
 
 ## Captura piloto y volumen inicial propuesto (antecedente)
 
@@ -94,7 +96,7 @@ Antes de declarar el dataset preparado, deben existir consentimientos y custodia
 
 ## Cámara oficial y validación previa — 13-11-2026
 
-La TMCAM 8305 será la única cámara para capturas de conocidos/desconocidos, TRAIN/VALIDATION/TEST, reconocimiento en vivo y demostración física. No se usará cámara integrada ni teléfono en el dataset principal. El dispositivo de acceso sigue pendiente; la cámara no lo sustituye.
+La TMCAM 8305 es la cámara de las capturas históricas y del desarrollo local. La demostración y el ensayo en vivo usan el celular. Registrar la fuente de cada ensayo para interpretar el cambio de cámara.
 
 La configuración objetivo es 1920×1080 a 30 FPS mediante OpenCV; el ajuste previsto antiparpadeo es 60 Hz, sujeto al soporte del controlador y revisión visual. La cámara y 1920×1080 quedan fijados para el piloto: el ensayo del 13-11-2026 midió 29,241 FPS medios, sin fallos durante diez minutos. El objetivo sigue siendo 30 FPS, sin afirmar constancia. Falta confirmar 60 Hz y ensayar desconexión durante lectura activa; no impiden preparar el piloto. La herramienta inicial está en [camera_diagnostic.md](camera_diagnostic.md).
 
@@ -175,11 +177,11 @@ El responsable autorizó la adquisición exclusiva de YuNet/SFace tras revisión
 
 ## Adquisición del dataset definitivo — 17-11-2026
 
-La revisión del 19-11-2026 conserva esta pauta para las capturas propias. La demostración usará la cámara del nodo IoT. La clasificación humano/no humano necesita ejemplos de esa tarea, y estos se organizan aparte de las cuatro identidades. Con S01 y R01 se podrá evaluar entre encuentros si se confirma que son distintos para cada integrante. La asignación vigente de R01 es TRAIN y se conserva hasta verificar esta condición.
+La revisión del 19-11-2026 conserva esta pauta para las capturas propias. La clasificación humano/no humano necesita ejemplos de esa tarea, y estos se organizan aparte de las cuatro identidades. El 20-11-2026 el responsable confirmó que S01 y R01 corresponden a dos días distintos y que en cada jornada se grabó a cada integrante por separado. Las carpetas con sufijo 02 corresponden al segundo día. Para la comparación entre encuentros usar S01 para entrenar y R01 como validación exploratoria. Mantener el registro original de R01 como lote preparado para TRAIN y registrar la nueva asignación en el manifiesto del experimento.
 
 El responsable declara que los cuatro integrantes aceptaron verbalmente en una reunión de Zoom grabada. Antes de las capturas definitivas y de entrenar con fotos anteriores, revisar localmente qué finalidades cubre ese consentimiento. Los [formularios](consent_templates.md) son un apoyo opcional. S01 entra al desarrollo y se podrá incorporar solo a TRAIN según la comparación descrita abajo. P01 continúa como piloto histórico. Los voluntarios requieren su propio consentimiento previo.
 
-**Protocolo de adquisición.** El [informe 08](reports/08_dataset_acquisition.md) recoge la procedencia y las pruebas de la herramienta. Para comparar el aporte de S01, entrenar una versión con las sesiones nuevas de TRAIN y otra con las mismas sesiones más S01. Mantener iguales la representación, el procedimiento de entrenamiento y las sesiones nuevas de VALIDATION. Usar TEST solo después de elegir la configuración. Todo S01 permanece agrupado por integrante y se reserva exclusivamente a TRAIN. El lote auditado de 80 candidatas es el punto inicial para seleccionar fotos de S01.
+**Experimento de entrega.** El [informe 08](reports/08_dataset_acquisition.md) recoge la procedencia y las pruebas de la herramienta. Usar S01 para ajustar los modelos de identidad y R01 para validación exploratoria entre días. El lote auditado de 80 candidatas sirve para seleccionar fotos de S01. Para el ensayo en vivo, congelar el modelo y registrar el celular como fuente. La clasificación humano/no humano usa su propia colección de positivos y negativos.
 
 ### Cámara y ensayo operativo
 

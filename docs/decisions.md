@@ -115,3 +115,10 @@ Resultados, tiempos, pruebas y archivos en [07_face_pipeline_validation.md](repo
 - D-44: tratar cada rostro en escenas grupales. Una identidad autorizada confirmada basta para actuar; la ambigüedad que impida confirmar autorización produce denegación.
 - D-45: separar humano/no humano del reconocimiento de los cuatro integrantes. Construir y entrenar los modelos de entrega. Conservar SFace y los clasificadores de biblioteca actuales como referencias de desarrollo. Demostrar un modelo, con la comparación y la interfaz descritas en el informe.
 - D-46: con las imágenes disponibles, considerar S01 para ajuste y R01 para validación entre encuentros si se verifica su independencia. La asignación de los archivos privados queda pendiente de esa comprobación. Un ensayo en vivo congelado puede completar la evidencia práctica.
+
+## Confirmaciones — 20-11-2026
+
+- D-47: el responsable confirma dos días de grabación, con una persona en cuadro por turno. Las carpetas con sufijo 02 corresponden a R01, el segundo día. En el experimento entre encuentros, S01 se destina a ajuste y R01 a validación exploratoria. Se conserva el registro de preparación original.
+- D-48: los modelos de IoT de la transcripción son ejemplos. Está disponible una placa con ESP-WROOM-32 y un SG90 para el pestillo de maqueta. La ruta con captura directa de la TMCAM en Windows sirve para desarrollo y requiere confirmación docente si se quiere presentar como configuración final.
+- D-49 / CONF-04: el responsable confirma la captura directa en Windows para la demostración. Usar TMCAM 8305, ESP-WROOM-32 y SG90. La comunicación serie USB es la primera opción de integración. D-49 actualiza la condición de captura registrada en D-43 y D-48.
+- D-50 / CONF-04: para la demostración, el responsable confirma captura desde el celular, procesamiento en Windows y actuación del ESP-WROOM-32 con SG90. Sustituye la fuente de captura de D-49. Se mantiene USB serie para la primera implementación de la actuación.

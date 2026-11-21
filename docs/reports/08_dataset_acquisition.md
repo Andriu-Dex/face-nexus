@@ -71,3 +71,9 @@ La ronda R99 se ejecutó con la escena vacía confirmada por el custodio. Direct
 Tras cerrar la vista previa, el custodio confirmó que no observó bandas con luz frontal difusa ni con luz lateral. La observación se registra aquí como confirmación posterior. El JSON técnico original quedó pendiente de aprobación porque la herramienta no registró las respuestas durante la ejecución. El ajuste de 60 Hz sigue sin confirmar. Se verificó que la prueba no guardó PNG ni creó sesiones de captura.
 
 Antes de la primera ronda real se requiere su propia comprobación de cámara aprobada en la herramienta, además de la autorización expresa de captura. Quedan pendientes las nuevas sesiones, la incorporación de otro extractor y el entrenamiento.
+
+## Actualización de custodia y uso experimental
+
+El custodio comprobó que la unidad desaparecía al desmontar VeraCrypt y volvió a montarla. Se verificaron NTFS, los permisos de la carpeta privada y la coincidencia del SHA-256 de un marcador sintético tras el remontaje normal. La recuperación mediante cabecera de respaldo y el cifrado de la unidad del sistema quedaron sin verificar. [Registro de puesta en servicio](../vault_and_camera_setup.md)
+
+El responsable confirmó que S01 y R01 corresponden a dos días diferentes. La asignación vigente para HOG usa la primera jornada en TRAIN y la segunda en VALIDATION. Se verificaron los hashes de 80 fotogramas por lote y la ausencia de copias exactas entre ambos. [Ensayo HOG](10_hog_knn_baseline.md)

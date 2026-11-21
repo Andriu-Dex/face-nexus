@@ -2,7 +2,9 @@
 
 ## Diseño previo
 
-Antes del entrenamiento principal, congelar manifiesto de particiones, representación, versiones, semillas, espacio de búsqueda y presupuesto por clasificador. Comparar SVM, RF, k-NN y MLP con las mismas muestras y particiones. Documentar transformaciones específicas necesarias para cada estimador; nunca ajustarlas con datos externos al tramo de entrenamiento.
+Antes del entrenamiento principal, congelar manifiesto de particiones, representación, versiones, semillas, espacio de búsqueda y presupuesto por clasificador. Comparar k-NN, MLP y SVM lineal multiclase con las mismas muestras y características HOG. Documentar las transformaciones y ajustarlas solo en el tramo de entrenamiento.
+
+El experimento de identidad usa S01 para TRAIN y R01 para VALIDATION exploratoria de conocidos. Para calibrar el rechazo de desconocidos, usar un grupo A grabado con el celular. El ensayo final usa el modelo congelado, la cámara del celular y un grupo B de desconocidos distintos. Contar intentos completos. Si se ensaya una quinta clase «otros», sus imágenes de entrenamiento deben estar separadas de los grupos A y B.
 
 En un experimento aparte estudiar características propias de procesamiento de imágenes y, si corresponde, representación preentrenada y concatenación. Declarar dimensiones, escalas y coste; no atribuir al clasificador una mejora producida por cambiar el extractor.
 
@@ -17,6 +19,8 @@ Para cada modelo reportar exactitud, precisión/recall/F1 por identidad, macro-F
 ## Rechazo y autorización
 
 Definir scores por modelo y calibrarlos sin TEST. Un score alto o una softmax no garantizan que un rostro pertenezca al conjunto conocido. Documentar fórmula de distancia/similitud cuando se use, normalización, umbrales y condiciones de aceptación. Si se usa coseno: `s(x,y) = (x·y)/(||x|| ||y||)`; rechazar vectores de norma cero. Su uso no está decidido.
+
+Para SVM y MLP con HOG se ensaya la diferencia entre las dos puntuaciones más altas. La revisión por fotograma de R01 sirve de diagnóstico. Para estimar el umbral se usan presentaciones en vivo del grupo A y de los integrantes con el mismo celular y la misma regla por intento. [Procedimiento de calibración](reports/12_hog_rejection_calibration.md)
 
 Reportar por separado:
 
@@ -46,4 +50,4 @@ Antes de TEST definir metas de rechazo, calidad y latencia a partir del piloto y
 
 Congelar el modelo y la política elegidos antes de TEST. Evaluar también candidatos congelados para la comparación final sin cambiar retrospectivamente al ganador. Cualquier ajuste tras examinar TEST requiere declarar ese conjunto consumido y obtener nueva evaluación independiente.
 
-Guardar configuración, versiones/hashes, cantidades por partición, métricas, matrices, tiempos, limitaciones y decisión justificada. Solo publicar reportes agregados revisados; resultados y modelos personalizados quedan privados. Actualmente no existen resultados medidos.
+Guardar configuración, versiones/hashes, cantidades por partición, métricas, matrices, tiempos, limitaciones y decisión justificada. Solo publicar reportes agregados revisados. Resultados por muestra y modelos personalizados quedan privados. Los primeros resultados corresponden a la validación exploratoria de identidades conocidas. [Comparación con HOG](reports/11_hog_classifier_comparison.md)

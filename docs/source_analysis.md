@@ -32,6 +32,8 @@ Las referencias siguientes usan líneas del original. La transcripción contiene
 | 16:17–17:51 | Comparar modelos y reportar exactitud en el informe. Demostrar un modelo seleccionado y describir la interfaz en el informe. |
 | 4:09–4:51, 6:27 | Anuncia revisión del proyecto el jueves siguiente. Tomando la fecha del archivo, la referencia corresponde al 26-11-2026. |
 
+El responsable confirmó la configuración de entrega con dos dispositivos: el celular captura y envía la imagen a Windows y el ESP-WROOM-32 acciona el SG90 según la decisión. CONF-04 recoge esta implementación para FaceNexus.
+
 ## Correcciones respecto del borrador
 
 - Se sustituye `FaceNexus_requirements.md` por `requirements.md` como única especificación vigente.

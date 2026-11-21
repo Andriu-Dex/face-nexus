@@ -1,6 +1,6 @@
 # Arquitectura propuesta
 
-**Estado:** TMCAM 8305 y el flujo con YuNet/SFace verificados para desarrollo. La demostración debe incorporar un nodo IoT con cámara y una salida física. La selección del equipo y los modelos de entrega siguen pendientes.
+**Estado:** TMCAM 8305 y YuNet/SFace verificados como referencias de desarrollo. En la demostración el celular entrega la imagen por red local, Windows reconoce y el ESP-WROOM-32 acciona el SG90 según la decisión recibida por USB serie.
 
 ## Criterio de implementación
 
@@ -10,16 +10,16 @@ Conforme a CONF-02, esta tabla separa responsabilidades conceptuales; no impone 
 
 | Módulo | Entrada → salida | Responsabilidad |
 | --- | --- | --- |
-| Captura | Cámara del nodo IoT → fotograma y referencia de la solicitud | Enviar a la computadora y comprobar frescura; TMCAM para desarrollo local |
+| Captura | Stream del celular → fotograma y referencia de la solicitud | Procesar el fotograma más reciente y denegar si la entrada se interrumpe |
 | Detección | Fotograma → lista de `FaceDetection` | Localizar candidatos para clasificar y reconocer por región |
 | Clasificación inicial | Región o imagen → humano/no humano | Modelo propio entrenado; sus negativos se preparan por separado |
 | Preparación | Región facial → imagen normalizada | Tamaño, canales, alineación y calidad documentados |
 | Características | Imagen → `Embedding` | Vector finito de dimensión fija y versión del extractor |
-| Clasificación | Vector → candidato y scores | Adaptador intercambiable SVM/RF/k-NN/MLP |
+| Clasificación | Vector → candidato y puntuaciones | Adaptador de entrega para SVM lineal, k-NN y MLP |
 | Rechazo | Candidato, scores y evidencia → `Prediction` | Aplicar política y umbrales versionados |
 | Permisos | ID local → permiso vigente | Administración independiente del entrenamiento |
 | Autorización | Predicción, permiso y contexto → `AccessDecision` | Denegar por defecto, comprobar frescura y ambigüedad |
-| Controlador | Decisión y contexto → estado de ejecución | Simulación inicial e integración física posterior |
+| Controlador | Etiqueta y decisión de Windows → estado de ejecución | Simulación inicial y después ESP-WROOM-32 con SG90 |
 | Evaluación | Manifiesto y configuración → resultados | Experimentos reproducibles fuera de la interfaz en vivo |
 | Interfaz/eventos | Estados y resultados → vista/historial | Mostrar el modelo elegido, identidades y acción. Comparar candidatos en el informe |
 
@@ -37,7 +37,7 @@ La detección múltiple produce decisiones por región. Actuar cuando al menos u
 
 ## Opciones iniciales
 
-Python y OpenCV ya se utilizan en el diagnóstico; la inferencia YuNet/SFace se validó sobre 80 candidatas y el stack de entrenamiento sigue pendiente. Framework de interfaz, detector, extractor y transporte al dispositivo se elegirán después de revisar compatibilidad, licencias y rendimiento. No se descargan pesos ni se fijan versiones sin esa revisión.
+Usar Python y una ventana OpenCV para la interfaz. YuNet localiza y recorta rostros. El clasificador humano/no humano evalúa imágenes o regiones candidatas antes de que el recorte facial pueda descartar las entradas negativas. En una escena grupal, el resultado de una región se aplica a esa región. Calcular HOG para k-NN propio en NumPy, MLP y SVM lineal multiclase en Keras.
 
 La entrega prioriza características calculadas por el equipo y clasificadores construidos y entrenados por el grupo. La comparación principal fija representación y muestras. SFace y los estimadores ya probados de scikit-learn quedan como referencias internas mientras se desarrolla esa ruta.
 

@@ -1,8 +1,8 @@
 # FaceNexus
 
-Proyecto académico de reconocimiento facial y control de acceso físico. Identificará cuatro personas registradas, rechazará desconocidos y comparará SVM, Random Forest, k-NN y ANN/MLP con las mismas particiones y representación de entrada.
+Proyecto académico de reconocimiento facial y control de acceso físico. Identificará cuatro personas registradas, rechazará desconocidos y comparará k-NN, MLP y SVM lineal multiclase con características HOG y particiones comunes.
 
-**Estado:** preparación del dataset y herramienta de diagnóstico de cámara. Hay detección/alineación y extracción de embeddings en desarrollo; no hay clasificadores entrenados ni reconocimiento evaluado; la TMCAM completó diez minutos a 1080p y 29,24 FPS medios; la comprobación de 60 Hz y el fallo de lectura por desconexión en caliente siguen pendientes. La entrega final requiere un dispositivo físico; una simulación solo permite avanzar durante el desarrollo.
+**Estado:** documentación lista para implementar. En la entrega, el celular transmite el video a Windows y FaceNexus envía la decisión por USB serie al ESP-WROOM-32, que acciona el SG90 del pestillo de maqueta. La TMCAM y la extracción de referencia ya se verificaron para desarrollo local.
 
 ## Documentación
 
@@ -31,7 +31,7 @@ La cámara es apta para el piloto con las condiciones medidas. La [ficha de capt
 
 ## Datos externos de desarrollo
 
-El [informe 06](docs/reports/06_external_frames.md) registra 11.413 frames auditados y una selección candidata de 80 copias, conservando originales. Todos los segmentos se agrupan en una S01/TRAIN por identidad; no hay todavía VALIDATION/TEST independientes ni calidad facial aprobada.
+El [informe 06](docs/reports/06_external_frames.md) registra 11.413 fotogramas auditados. Los segmentos históricos se agrupan en S01 por identidad. El responsable confirmó que R01 se grabó otro día. El experimento usará S01 para entrenar y R01 para validar entre encuentros.
 
 
 ## Primera validación facial
