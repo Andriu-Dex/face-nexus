@@ -1,0 +1,4 @@
+-r requirements-training.txt
+keras==3.15.1
+jax==0.12.1
+jaxlib==0.12.1
