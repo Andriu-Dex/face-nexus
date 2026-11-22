@@ -56,3 +56,17 @@ Windows comprueba primero la versión del firmware de banco con `PING`, abre el 
 El 20-11-2026 se probó con un servidor MJPEG sintético en Windows y el ESP32 real en COM5. YuNet procesó 5/5 fotogramas de 320 × 240 y devolvió `NO_FACE`. Una segunda ejecución con el servidor inaccesible produjo `STREAM_UNAVAILABLE` y terminó con código 2. En ambos casos el ESP32 contestó `UNKNOWN DENIED SIMULATED` con el identificador esperado.
 
 El mismo día se ejecutó la prueba con el celular real por la red local. En dos rondas, OpenCV recibió cinco fotogramas de 1920 × 1080 por ronda y YuNet informó `NO_FACE` en la escena despejada. En 2/2 rondas, el ESP32 confirmó `UNKNOWN DENIED SIMULATED` por COM5 con el identificador correspondiente. El SG90 permaneció desconectado.
+
+### Comprobación de enlace 22-11-2026
+
+Tras reconectar el micro-USB, el Administrador de dispositivos volvió a listar Silicon Labs CP210x en **COM5**. Un `PING` desde el entorno virtual recibió `PONG FACENEXUS BENCH 1`. El firmware de pestillo (`firmware/latch`) no se cargó en esa sesión. El SG90 no se ensayó.
+
+### Banco del firmware de pestillo (sin reconocimiento)
+
+Cuando se grabe `firmware/latch`, el primer ensayo físico usa órdenes de prueba, no la cámara. El SG90 permanece desconectado o el mecanismo libre. Windows no envía `GRANTED` desde el reconocimiento hasta medir extraños y humano/no humano.
+
+```powershell
+.\.venv\Scripts\python.exe -m scripts.latch_command_bench --port COM5 --servo-disconnected
+```
+
+`PING` debe ser `PONG FACENEXUS LATCH 1`. Las tramas `CHECK` esperan `CLOSED` o `ACTUATED`. `pulse_confirmed` no afirma la posición del pestillo. No ejecutar este comando con el firmware de banco (`BENCH 1`) ni con el servo engranado.
