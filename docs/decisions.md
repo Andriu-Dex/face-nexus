@@ -122,3 +122,49 @@ Resultados, tiempos, pruebas y archivos en [07_face_pipeline_validation.md](repo
 - D-48: los modelos de IoT de la transcripción son ejemplos. Está disponible una placa con ESP-WROOM-32 y un SG90 para el pestillo de maqueta. La ruta con captura directa de la TMCAM en Windows sirve para desarrollo y requiere confirmación docente si se quiere presentar como configuración final.
 - D-49 / CONF-04: el responsable confirma la captura directa en Windows para la demostración. Usar TMCAM 8305, ESP-WROOM-32 y SG90. La comunicación serie USB es la primera opción de integración. D-49 actualiza la condición de captura registrada en D-43 y D-48.
 - D-50 / CONF-04: para la demostración, el responsable confirma captura desde el celular, procesamiento en Windows y actuación del ESP-WROOM-32 con SG90. Sustituye la fuente de captura de D-49. Se mantiene USB serie para la primera implementación de la actuación.
+
+## Diagnóstico en vivo — 21-11-2026
+
+- D-51: el siguiente trabajo de reconocimiento es medir el dominio del celular, no accionar el SG90. Se registra calidad de detección por fotograma (conteo, score de YuNet, tamaño de caja, motivo de recorte) y puntuaciones de clasificador, sin persistir imágenes ni vectores HOG. Un comando `probe` elige el giro sobre los mismos fotogramas. `inspect-attempts` resume intentos aunque falten integrantes. La política de muestreo `hog-margin-5x3-v1` no cambia. Los registros previos siguen siendo válidos para comparar umbrales cuando esté el conjunto mínimo.
+
+## Adaptación al celular — 21-11-2026
+
+- D-52: con un solo integrante presente, se captura un lote TRAIN de K01 desde el MJPEG del celular, separado de `rejection_calibration`. Las presentaciones de calibración no se reutilizan como entrenamiento porque no conservan vectores. K02–K04 se añaden al mismo esquema cuando estén disponibles. Los lotes de otra cámara (sesión 03 de K02 y K04) no entran en este lote. El reentrenamiento HOG espera al menos K01 en dominio celular; no se declara modelo nuevo hasta extraer y evaluar.
+
+- D-53: no se reentrena el clasificador de cuatro clases con solo K01 del celular. Mientras llegan K02–K04, se mide el dominio HOG (lote `k01_phone_v3` contra medias de S01 y modelos congelados) y se implementa permiso más autorización simulada, siempre en modo cerrado y sin apertura física.
+
+## Clasificador humano / no humano — 21-11-2026
+
+- D-54: se entrena una CNN propia de dos clases con LFW (humano, partición por identidad) y CIFAR-10 (no humano, objetos y animales). No identifica a K01–K04. Los pesos preentrenados siguen reservados al recorte (YuNet). El modelo se guarda fuera de Git. Un recorte de 2000 imágenes por clase en TRAIN acota la primera ejecución; se puede repetir sin recorte. LFW se usa solo como etiqueta «humano»; no se mezcla con las cuatro identidades locales.
+
+## Identidad de un integrante — 21-11-2026
+
+- D-55: mientras K02–K04 no estén en el celular, el reconocimiento operativo es binario: K01 frente a OTHER (LFW, partido por identidad). Positivos: HOG de S01 de K01 más `k01_phone_v3` (15 TRAIN, 5 VALIDATION del celular). No se inventan las otras tres clases. La SVM lineal se define y entrena en Keras, igual que la comparación de fase 4. El umbral de aceptación se calibra para rechazar a los OTHER de validación que el modelo etiquete como K01. K02–K04 se incorporarán después como clases nuevas, no como etiquetas ficticias. El sistema de cuatro identidades sigue incompleto hasta esas capturas (PROF-01, PROF-07).
+
+- D-56: en el celular, la CNN LFW/CIFAR no se usa como veto de un recorte YuNet (en 20 fotos TRAIN, 1 ya salía no humano). El umbral SVM 1,46 rechazaba fotos propias (márgenes 0,58–1,41) para anular 47 falsos K01 en LFW. La demo en vivo acepta el argmax K01 (margen 0) y muestra `cnn=H/N` sin bloquear. FAR LFW de validación con esa regla: 47/2627. Un objeto sin caja YuNet sigue siendo `no_face`.
+
+- D-57: k-NN, MLP y SVM lineal se comparan con el mismo HOG K01/OTHER (S01 + celular + LFW). Se descarta un modelo con recall K01 nulo. Gana k-NN (5/5 K01, 1/2627 LFW). La MLP colapsa a OTHER. La SVM reconoce a K01 y acepta 47 LFW. La demo en vivo no se cambia todavía: sigue la SVM ya ensayada delante de la cámara. La comparación de cuatro clases en S01/R01 (D-41 / informe 11) permanece aparte.
+
+- D-58: la demo en vivo usa k-NN por defecto, con la galería TRAIN del ensayo `identity_k01_compare_v1`. La SVM queda como `--backend svm`. No se añade umbral de distancia en este paso. La CNN LFW/CIFAR sigue siendo diagnóstico.
+
+- D-59: se ajusta `human_cnn_full` con recortes YuNet y parches de fondo de `k01_phone_v3` (peso 20). Las 5 caras de validación del celular pasan a humano. YuNet sigue decidiendo si hay cara; la CNN no veta ese recorte. En ausencia de caja se muestra `cnn=` sobre el fotograma. No es liveness.
+
+- D-60: se compara HOG 1764-D con el híbrido landmarks YuNet (12-D L2) + HOG completo (1776-D), mismas filas K01/OTHER. k-NN empata en 5/5 y 0 LFW colados; gana HOG por latencia. SVM empeora con landmarks (54 vs 225 LFW). La demo sigue en k-NN HOG. No se recorta el HOG.
+
+- D-61: la calidad de recorte se mide en `k01_phone_v3` y S01 K01 (Laplaciano y colas 10/245). El umbral copiado de Laplaciano 85 rechazaría 8/20 fotos del celular que ya sirven en TRAIN/demo; no se adopta. Los avisos, si se usan, son por debajo del mínimo del mismo montaje (celular ≈ 8,8). No se borra TRAIN ni se veta el vivo. No se comparte umbral de tamaño de caja entre TMCAM y el teléfono.
+
+- D-62: el vivo clasifica cada recorte YuNet y autoriza la escena si al menos un K01 pasa k-NN con T=0,456 (máximo d de VALIDATION × 1,1). El falso K01 de LFW (1/2627) queda fuera. Varios rostros ya no se rechazan en bloque. K02–K04 siguen sin clase. El simulador no abre el pestillo.
+
+- D-63: se entrena una galería de cuatro IDs con encuentros distintos en el volumen privado (TRAIN: encuentro A de cada ID más un segundo encuentro de K02–K04; VALIDATION: encuentro B de K01 y sesión 03 de K02–K04). Exactitud 31/39; K02 5/9 se confunde con K03. T=0,770. El vivo autoriza a cualquiera de K01–K04 con permiso. Firmware `latch` (GPIO 18) para el SG90; el banco SIMULATED no mueve el servo. Interfaz `operator_ui`. El celular de la demostración sigue siendo el dominio de entrega.
+
+- D-64: el 22-11-2026, con el micro-USB conectado, Windows mostró Silicon Labs CP210x en COM5. `PING` a 115200 recibió `PONG FACENEXUS BENCH 1`. No se grabó `latch`, no había `arduino-cli` en el PATH y no se observó el SG90. Queda pendiente la decisión de flashear.
+
+- D-65: archivos e interfaz no emiten serie. Una orden por presentación de cámara (`PresentationGate`). Solo firmware `LATCH` habilita envío. Galería y T del mismo ensayo con SHA-256; si faltan, `model_unavailable`. El mapa de carpetas de Downloads sale del código Git. No se flasheó el pestillo ni se vetó con la CNN.
+
+- D-66: el rearme exige cuadro vacío (`no_face`); denegaciones ambiguas bloquean. El acuse serie es la línea completa; `pulse_confirmed` no afirma la posición. Un error de transporte invalida el puerto. T JSON solo numérico real; `bind_threshold` comprueba `summary.json` si existe. Informes 14/16/18/22 y D-52/D-63 sin nombres de carpeta ni IP de ensayo.
+
+- D-67: `no_face` de YuNet no rearma el pestillo; el operador pulsa «Siguiente presentación». `load_verified_knn` trata zip corrupto como `model_unavailable` y exige las cuatro identidades. `bind_threshold` no escribe sin `summary.json` con huella coincidente.
+
+- D-68: la interfaz no envía el pestillo desde el reconocimiento. Extraños = LFW OTHER contra la galería de cuatro con T. Humano/no humano se mide aparte y no veta YuNet. Banco LATCH: órdenes `CHECK` con `--servo-disconnected`; no se flashea ni se engrana el SG90 en esta ronda.
+
+- D-69: rechazo abierto: aceptar solo si el ganador es K01–K04, `d ≤ T` y `d_otra − d ≥ G`. T=0,530 y G=0,057 se eligen para FAR ≤ 1 % en LFW TRAIN OTHER (60/6537). El T anterior 0,770 queda como `previous_max_distance`. El recall LOO de TRAIN baja a 78/120. No es TEST ni el celular del aula.

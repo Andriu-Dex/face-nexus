@@ -23,11 +23,17 @@ El muestreo recibió cinco fotogramas de una transmisión MJPEG sintética sin r
 El ejemplo registra una presentación. La dirección es ilustrativa y el número cambia en cada repetición para conservar el registro anterior.
 
 ```powershell
-python -m scripts.calibrate_hog --vault V:\FaceNexus attempt --url http://192.168.1.20:8080/video --participant A01 --number 1
+python -m scripts.calibrate_hog probe --url http://192.168.1.20:8080/video
+python -m scripts.calibrate_hog --vault V:\FaceNexus attempt --url http://192.168.1.20:8080/video --participant A01 --number 1 --rotation 90
+python -m scripts.calibrate_hog --vault V:\FaceNexus inspect-attempts
 python -m scripts.calibrate_hog --vault V:\FaceNexus compare-attempts
 ```
 
-Si el celular entrega la imagen de lado, `--rotation 90` aplica un giro horario antes de YuNet. Conservar la orientación física del celular entre presentaciones y usar la corrección que deje el rostro derecho. El registro del intento conserva el giro aplicado.
+`probe` lee tres fotogramas y prueba los giros 0°, 90°, 180° y 270° sobre las mismas imágenes. No evalúa identidad ni escribe en el volumen. Usar el `suggested_rotation` si hay recortes usables y repetir `probe` si se mueve el celular.
+
+Si el celular entrega la imagen de lado, `--rotation 90` aplica un giro horario antes de YuNet. Conservar la orientación física del celular entre presentaciones y usar la corrección que deje el rostro derecho. El registro del intento conserva el giro aplicado, el recuento de rostros, la puntuación de YuNet y el tamaño de caja por fotograma. No guarda imágenes ni vectores HOG.
+
+`inspect-attempts` resume aciertos y confusiones aunque falten K02–K04. `compare-attempts` solo estima umbral cuando hay presentaciones usables de los cuatro integrantes y de al menos un voluntario A.
 
 Con intentos utilizables de los cuatro integrantes y del grupo A, el comparador busca para cada modelo el menor umbral que rechaza las aceptaciones indebidas observadas. Reporta cuántos intentos conocidos reconoce y cuántos rechaza con ese umbral. La estimación es exploratoria y se valida después con el modelo congelado y un grupo distinto.
 
@@ -42,3 +48,16 @@ Antes de calibrar el rechazo, SVM y MLP propusieron alguna identidad conocida en
 Se registraron cuatro presentaciones de K01. La primera recibió cinco fotogramas y no produjo un recorte usable. Una comprobación en memoria confirmó un rostro usable en cuatro de cuatro fotogramas con el giro horario de 90°. Las siguientes tres presentaciones mantuvieron ese giro y produjeron cinco fotogramas usables cada una.
 
 Antes de aplicar un umbral, la SVM acertó una de las tres presentaciones usables y MLP cero de tres. El comparador registró seis presentaciones usables de nueve en total, sumando K01 y el voluntario. El cálculo del umbral requiere las presentaciones de K02, K03 y K04.
+
+## Continuación operativa — 21-11-2026
+
+El software de calibración ahora registra, por fotograma y sin imágenes, si falló la detección, si hubo varios rostros o si el recorte HOG fue usable, junto con las puntuaciones de SVM y MLP. El comando `probe` elige el giro del celular antes de gastar números de intento. El comando `inspect-attempts` permite leer el dominio del celular con los registros ya guardados.
+
+Pendiente de ejecución con el celular en la posición de demostración:
+
+1. `probe` hasta confirmar un giro con recortes usables.
+2. Tres presentaciones usables nuevas de K02, K03 y K04, y repetir K01 con el mismo giro. No reutilizar números de intento ya escritos.
+3. Completar o repetir voluntarios del grupo A distintos del grupo B final.
+4. `inspect-attempts` para separar fallo de recorte y fallo de clasificación; después `compare-attempts` cuando estén los cuatro conocidos.
+
+No se conecta el SG90 en esta etapa. Los intentos previos de K01 y A01 se conservan como antecedente; si el giro o la distancia cambian de forma material, registrar los nuevos con el siguiente número libre y no mezclar interpretaciones sin decirlo.
