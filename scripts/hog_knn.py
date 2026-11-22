@@ -3,6 +3,8 @@
 import cv2
 import numpy as np
 
+from scripts.face_pipeline import crop_quality
+
 
 FACE_SIZE = (64, 64)
 HOG = cv2.HOGDescriptor(FACE_SIZE, (16, 16), (8, 8), (8, 8), 9)
@@ -19,33 +21,116 @@ def describe_face(crop):
     return vector / norm if norm > 0 and np.isfinite(norm) else None
 
 
-def face_features(frame, detector, *, require_single=False):
-    """Devuelve caja y vector por cada rostro válido del mismo fotograma."""
+def _require_bgr_frame(frame):
     if (not isinstance(frame, np.ndarray) or frame.ndim != 3 or frame.shape[2] != 3
             or frame.dtype != np.uint8 or not frame.size):
         raise ValueError("Se requiere un fotograma BGR uint8.")
-    height, width = frame.shape[:2]
+    return frame.shape[:2]
+
+
+def detect_faces(frame, detector):
+    """Cajas y 5 landmarks de YuNet en píxeles del fotograma original."""
+    height, width = _require_bgr_frame(frame)
     scale = min(1., 640 / max(width, height))
     size = max(1, round(width * scale)), max(1, round(height * scale))
     detector.setInputSize(size)
     _, detections = detector.detect(cv2.resize(frame, size, interpolation=cv2.INTER_AREA))
-    if detections is None or (require_single and len(detections) != 1):
-        return []
     faces = []
+    if detections is None:
+        return faces
+    sx, sy = width / size[0], height / size[1]
     for detection in detections:
         x, y, w, h = detection[:4]
         if not np.isfinite([x, y, w, h]).all() or w <= 0 or h <= 0:
             continue
-        left = max(0, round(x * width / size[0]))
-        top = max(0, round(y * height / size[1]))
-        right = min(width, round((x + w) * width / size[0]))
-        bottom = min(height, round((y + h) * height / size[1]))
+        left = max(0, round(x * sx))
+        top = max(0, round(y * sy))
+        right = min(width, round((x + w) * sx))
+        bottom = min(height, round((y + h) * sy))
         if right <= left or bottom <= top:
             continue
+        score = None
+        landmarks = None
+        if len(detection) >= 15:
+            if np.isfinite(detection[14]):
+                score = float(detection[14])
+            points = np.asarray(detection[4:14], dtype=np.float64).reshape(5, 2)
+            points[:, 0] *= sx
+            points[:, 1] *= sy
+            if np.isfinite(points).all():
+                landmarks = points
+        faces.append((left, top, right, bottom, score, landmarks))
+    return faces
+
+
+def detect_boxes(frame, detector):
+    """Localiza cajas en el fotograma original. Conserva el recorte 640 del detector."""
+    return [(left, top, right, bottom, score)
+            for left, top, right, bottom, score, _landmarks in detect_faces(frame, detector)]
+
+
+def face_features(frame, detector, *, require_single=False):
+    """Devuelve caja y vector por cada rostro válido del mismo fotograma."""
+    boxes = detect_boxes(frame, detector)
+    if require_single and len(boxes) != 1:
+        return []
+    faces = []
+    for left, top, right, bottom, _score in boxes:
         features = describe_face(frame[top:bottom, left:right])
         if features is not None:
             faces.append(((left, top, right, bottom), features))
     return faces
+
+
+def inspect_live_frame(frame, detector):
+    """Separa fallo de detección, varios rostros y recorte HOG usable. No guarda el vector."""
+    boxes = detect_boxes(frame, detector)
+    height, width = frame.shape[:2]
+    scores = [score for *_box, score in boxes if score is not None]
+    report = {
+        "reason": "no_face",
+        "face_count": len(boxes),
+        "frame_width": width,
+        "frame_height": height,
+        "max_detection_score": max(scores) if scores else None,
+        "box_width_px": None,
+        "box_height_px": None,
+        "vector": None,
+    }
+    if not boxes:
+        return report
+    if len(boxes) != 1:
+        report["reason"] = "multiple_faces"
+        return report
+    left, top, right, bottom, score = boxes[0]
+    report["box_width_px"] = right - left
+    report["box_height_px"] = bottom - top
+    report["max_detection_score"] = score
+    crop = frame[top:bottom, left:right]
+    report["quality"] = crop_quality(crop)
+    features = describe_face(crop)
+    if features is None:
+        report["reason"] = "empty_hog"
+        return report
+    report["reason"] = "usable"
+    report["vector"] = features
+    return report
+
+
+def runner_up_distance(gallery, labels, query, winner):
+    """Menor distancia a una muestra cuya etiqueta no es la del ganador."""
+    mask = np.asarray(labels).astype(str) != str(winner)
+    if not mask.any():
+        return None
+    return float(np.linalg.norm(gallery[mask] - query, axis=1).min())
+
+
+def accepts_open_set(winner, distance, gap, max_distance, min_gap):
+    if winner not in PEOPLE or distance is None or distance > max_distance:
+        return False
+    if min_gap <= 0:
+        return True
+    return gap is not None and gap >= min_gap
 
 
 def knn_candidate(train, labels, query, k=3):

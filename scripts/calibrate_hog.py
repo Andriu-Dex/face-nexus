@@ -18,7 +18,7 @@ from scripts.compare_hog_models import read_split
 from scripts.dataset_capture import verify_vault
 from scripts.evaluate_hog_knn import MANIFEST_FOLDER, validate_manifest
 from scripts.face_pipeline import describe, load_detector
-from scripts.hog_knn import PEOPLE, face_features
+from scripts.hog_knn import PEOPLE, inspect_live_frame
 from scripts.phone_serial_bench import local_stream_url
 
 
@@ -28,6 +28,9 @@ VOTES = 3
 INTERVAL = .3
 TIME_LIMIT = 2.5
 PROFILE = "hog-margin-5x3-v1"
+ROTATE = {0: None, 90: cv2.ROTATE_90_CLOCKWISE, 180: cv2.ROTATE_180,
+          270: cv2.ROTATE_90_COUNTERCLOCKWISE}
+PROBE_SAMPLES = 3
 
 
 def frame_vote(scores):
@@ -61,50 +64,125 @@ def load_saved_models(folder):
     return models, hashes
 
 
-def read_attempt(url, detector, models, rotation=0):
+def public_frame(report, model_votes=None):
+    """Quita el vector HOG. Conserva calidad de detección y votos por fotograma."""
+    row = {key: value for key, value in report.items() if key != "vector"}
+    if model_votes is not None:
+        row["votes"] = model_votes
+    return row
+
+
+def score_models(vector, models):
+    votes = {}
+    results = []
+    for name, model in models.items():
+        scores = np.asarray(model(vector[None, :], training=False), dtype=np.float64)[0]
+        result = frame_vote(scores)
+        if result is None:
+            continue
+        person, margin = result
+        votes[name] = {
+            "candidate": person,
+            "margin": margin,
+            "scores": {label: float(scores[index]) for index, label in enumerate(PEOPLE)},
+        }
+        results.append((name, result))
+    return votes, results
+
+
+def collect_frames(url, count, interval, time_limit):
+    """Lee fotogramas crudos. El reloj empieza después de abrir el video."""
     capture = cv2.VideoCapture()
-    count = usable = 0
-    votes = {name: [] for name in models}
-    rotate = {0: None, 90: cv2.ROTATE_90_CLOCKWISE, 180: cv2.ROTATE_180,
-              270: cv2.ROTATE_90_COUNTERCLOCKWISE}[rotation]
+    frames = []
     try:
         if not capture.open(url, cv2.CAP_FFMPEG, [
             cv2.CAP_PROP_OPEN_TIMEOUT_MSEC, 3500, cv2.CAP_PROP_READ_TIMEOUT_MSEC, 400,
         ]):
-            return "stream_unavailable", count, usable, {}
+            return "stream_unavailable", frames
         start = next_sample = monotonic()
-        while count < SAMPLES:
+        while len(frames) < count:
             if not capture.grab():
-                return "stream_interrupted", count, usable, {}
+                return "stream_interrupted", frames
             now = monotonic()
-            if now - start > TIME_LIMIT:
-                return "time_limit", count, usable, {}
+            if now - start > time_limit:
+                return "time_limit", frames
             if now < next_sample:
                 continue
             ok, frame = capture.retrieve()
             if not ok or frame is None:
-                return "invalid_frame", count, usable, {}
-            if rotate is not None:
-                frame = cv2.rotate(frame, rotate)
-            faces = face_features(frame, detector, require_single=True)
-            count += 1
-            next_sample = now + INTERVAL
-            if faces:
-                usable += 1
-                vector = faces[0][1]
-                for name, model in models.items():
-                    result = frame_vote(np.asarray(model(vector[None, :], training=False))[0])
-                    if result is not None:
-                        votes[name].append(result)
-            if monotonic() - start > TIME_LIMIT:
-                return "time_limit", count, usable, {}
+                return "invalid_frame", frames
+            frames.append(frame)
+            next_sample = now + interval
+            if monotonic() - start > time_limit:
+                return "time_limit", frames
     except (cv2.error, ValueError, RuntimeError):
-        return "processing_error", count, usable, {}
+        return "processing_error", frames
     finally:
         capture.release()
+    return "sampled", frames
+
+
+def read_attempt(url, detector, models, rotation=0):
+    status, frames = collect_frames(url, SAMPLES, INTERVAL, TIME_LIMIT)
+    count = usable = 0
+    votes = {name: [] for name in models}
+    reports = []
+    if status == "stream_unavailable":
+        return status, count, usable, {}, reports
+    rotate = ROTATE[rotation]
+    try:
+        for frame in frames:
+            if rotate is not None:
+                frame = cv2.rotate(frame, rotate)
+            info = inspect_live_frame(frame, detector)
+            count += 1
+            model_votes = None
+            if info["reason"] == "usable":
+                usable += 1
+                model_votes, scored = score_models(info["vector"], models)
+                for name, result in scored:
+                    votes[name].append(result)
+            reports.append(public_frame(info, model_votes))
+    except (cv2.error, ValueError, RuntimeError):
+        return "processing_error", count, usable, {}, reports
+    if status != "sampled":
+        return status, count, usable, {}, reports
     return ("usable" if usable >= VOTES else "insufficient_faces"), count, usable, {
         name: attempt_vote(results) for name, results in votes.items()
-    }
+    }, reports
+
+
+def probe_orientations(url, detector):
+    """Prueba los cuatro giros sobre los mismos fotogramas. No evalúa identidad."""
+    status, frames = collect_frames(url, PROBE_SAMPLES, INTERVAL, TIME_LIMIT)
+    summary = {"status": status, "sampled_frames": len(frames), "rotations": []}
+    if not frames:
+        return summary
+    for rotation, rotate in ROTATE.items():
+        reasons = []
+        heights = []
+        for frame in frames:
+            if rotate is not None:
+                frame = cv2.rotate(frame, rotate)
+            info = inspect_live_frame(frame, detector)
+            reasons.append(info["reason"])
+            if info["box_height_px"]:
+                heights.append(info["box_height_px"])
+        usable = reasons.count("usable")
+        summary["rotations"].append({
+            "rotation": rotation,
+            "usable": usable,
+            "no_face": reasons.count("no_face"),
+            "multiple_faces": reasons.count("multiple_faces"),
+            "empty_hog": reasons.count("empty_hog"),
+            "median_box_height_px": describe(heights)["median"] if heights else None,
+        })
+    ranked = sorted(summary["rotations"],
+                    key=lambda row: (row["usable"], row["median_box_height_px"] or 0),
+                    reverse=True)
+    best = ranked[0]
+    summary["suggested_rotation"] = best["rotation"] if best["usable"] else None
+    return summary
 
 
 def review_r01(folder, models):
@@ -133,11 +211,53 @@ def review_r01(folder, models):
     return {"usable_frames": len(labels), "original_frames": len(records), "models": summary}
 
 
+def inspect_attempts(records):
+    """Resume intentos incompletos: útil para ver dominio celular vs TMCAM."""
+    by_person = {}
+    for row in records:
+        person = row["participant"]
+        entry = by_person.setdefault(person, {
+            "total": 0, "usable": 0, "other_status": {},
+            "models": {name: {"correct": 0, "wrong": 0, "no_vote": 0, "candidates": {}}
+                       for name in MODELS},
+        })
+        entry["total"] += 1
+        if row["status"] != "usable":
+            entry["other_status"][row["status"]] = entry["other_status"].get(row["status"], 0) + 1
+            continue
+        entry["usable"] += 1
+        for name in MODELS:
+            vote = (row.get("votes") or {}).get(name)
+            stats = entry["models"][name]
+            if vote is None:
+                stats["no_vote"] += 1
+                continue
+            candidate = vote["candidate"]
+            stats["candidates"][candidate] = stats["candidates"].get(candidate, 0) + 1
+            if candidate == person:
+                stats["correct"] += 1
+            else:
+                stats["wrong"] += 1
+    usable = [row for row in records if row["status"] == "usable"]
+    return {
+        "status": "progress",
+        "total": len(records),
+        "usable": len(usable),
+        "missing_known": [person for person in PEOPLE
+                          if not any(row["participant"] == person for row in usable)],
+        "unknown_people": sorted({row["participant"] for row in usable
+                                  if str(row["participant"]).startswith("A")}),
+        "by_participant": by_person,
+    }
+
+
 def compare_attempts(records):
     usable = [row for row in records if row["status"] == "usable"]
     present = {row["participant"] for row in usable}
     if not set(PEOPLE).issubset(present) or not any(person.startswith("A") for person in present):
-        return {"status": "insufficient_live_data", "usable": len(usable), "total": len(records)}
+        progress = inspect_attempts(records)
+        progress["status"] = "insufficient_live_data"
+        return progress
 
     known = [row for row in usable if row["participant"] in PEOPLE]
     unknown = [row for row in usable if row["participant"].startswith("A")]
@@ -162,9 +282,17 @@ def compare_attempts(records):
     return result
 
 
+def load_attempt_records(folder, hashes):
+    attempts = child(folder, "rejection_calibration")
+    records = [read_json(child(attempts, path.name)) for path in sorted(attempts.glob("*.json"))]
+    if any(record["profile"] != PROFILE or record["model_hashes"] != hashes for record in records):
+        raise ValueError("Los intentos se registraron con otra política de muestreo o modelos.")
+    return records
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--vault", type=Path, required=True)
+    parser.add_argument("--vault", type=Path, help="Volumen VeraCrypt. Obligatorio salvo en probe.")
     modes = parser.add_subparsers(dest="mode", required=True)
     modes.add_parser("review-r01", help="Mide márgenes por fotograma, sin fijar umbrales.")
     attempt = modes.add_parser("attempt", help="Guarda una presentación de calibración sin imágenes.")
@@ -175,7 +303,17 @@ def main():
                          help="Giro horario del fotograma para orientar el video.")
     attempt.add_argument("--models", type=Path, default=Path("models/verified"))
     modes.add_parser("compare-attempts", help="Calcula candidatos de umbral con las tomas en vivo.")
+    modes.add_parser("inspect-attempts", help="Resume intentos aunque falten integrantes.")
+    probe = modes.add_parser("probe", help="Elige el giro del celular sin guardar identidad.")
+    probe.add_argument("--url", type=local_stream_url, required=True)
+    probe.add_argument("--models", type=Path, default=Path("models/verified"))
     args = parser.parse_args()
+    if args.mode == "probe":
+        print(json.dumps(probe_orientations(args.url, load_detector(args.models)),
+                         indent=2, allow_nan=False))
+        return
+    if args.vault is None:
+        parser.error("--vault es obligatorio en este modo.")
     if args.mode == "attempt" and (
             not re.fullmatch(r"(?:K0[1-4]|A(?!00)[0-9]{2})", args.participant) or not 1 <= args.number <= 999):
         parser.error("Código de participante o número de intento inválido.")
@@ -185,14 +323,13 @@ def main():
         print(json.dumps(review_r01(folder, models), indent=2, allow_nan=False))
         return
 
-    attempts = child(folder, "rejection_calibration")
-    if args.mode == "compare-attempts":
-        records = [read_json(child(attempts, path.name)) for path in sorted(attempts.glob("*.json"))]
-        if any(record["profile"] != PROFILE or record["model_hashes"] != hashes for record in records):
-            raise ValueError("Los intentos se registraron con otra política de muestreo o modelos.")
-        print(json.dumps(compare_attempts(records), indent=2, allow_nan=False))
+    if args.mode in {"compare-attempts", "inspect-attempts"}:
+        records = load_attempt_records(folder, hashes)
+        report = inspect_attempts(records) if args.mode == "inspect-attempts" else compare_attempts(records)
+        print(json.dumps(report, indent=2, allow_nan=False))
         return
 
+    attempts = child(folder, "rejection_calibration")
     attempts.mkdir(exist_ok=True)
     path = child(attempts, f"{args.participant}-{args.number:03}.json")
     if path.exists():
@@ -201,12 +338,16 @@ def main():
     # Carga los modelos antes de iniciar el reloj de la presentación.
     for model in models.values():
         model(np.zeros((1, model.input_shape[-1]), np.float32), training=False)
-    status, sampled, usable, votes = read_attempt(args.url, detector, models, args.rotation)
+    status, sampled, usable, votes, frames = read_attempt(args.url, detector, models, args.rotation)
     record = {"at_utc": utc_now(), "participant": args.participant, "attempt": args.number,
               "profile": PROFILE, "model_hashes": hashes, "status": status,
-              "sampled_frames": sampled, "usable_frames": usable, "rotation": args.rotation, "votes": votes}
+              "sampled_frames": sampled, "usable_frames": usable, "rotation": args.rotation,
+              "votes": votes, "frames": frames}
     write_synced(path, json.dumps(record, indent=2, allow_nan=False).encode("utf-8"))
     print(f"Intento registrado | estado {status} | fotogramas usables {usable}/{sampled}")
+    if frames:
+        reasons = sorted({row["reason"] for row in frames})
+        print(f"Detección por fotograma: {', '.join(reasons)}")
 
 
 if __name__ == "__main__":

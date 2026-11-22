@@ -140,6 +140,28 @@ def process_image(image, detector, extractor):
         return result, None, None
 
 
+DARK = 10
+BRIGHT = 245
+
+
+def crop_quality(crop):
+    """Laplaciano, media y colas del histograma sobre el recorte en gris."""
+    if crop is None or not crop.size:
+        return None
+    grey = cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY) if crop.ndim == 3 else crop
+    if grey.dtype != np.uint8:
+        grey = np.clip(grey, 0, 255).astype(np.uint8)
+    height, width = grey.shape[:2]
+    return {
+        "width_px": int(width),
+        "height_px": int(height),
+        "laplacian_var": float(cv2.Laplacian(grey, cv2.CV_64F).var()),
+        "mean": float(grey.mean()),
+        "dark_fraction": float((grey <= DARK).mean()),
+        "bright_fraction": float((grey >= BRIGHT).mean()),
+    }
+
+
 def describe(values):
     array = np.asarray(values, dtype=np.float64)
     if array.size == 0:
