@@ -53,6 +53,8 @@ def test_scene_grants_if_one_of_two_yunet_boxes_is_k01():
     assert scene["outcome"] == GRANTED and scene["identity"] == "K01"
     assert len(scene["regions"]) == 2
     assert scene["regions"][1]["outcome"] == DENIED
+    assert scene["regions"][0]["nearest"] == "K01"
+    assert scene["regions"][1]["nearest"] == "OTHER"
     painted = paint_regions(frame, scene["regions"])
     assert not np.array_equal(painted, frame)
 

@@ -93,6 +93,9 @@ def recognize_crop(crop, human_model, identify, permissions, *,
         permission_active=bool(permissions.get(candidate)) if candidate else False,
         is_human=is_human,
     )
+    row["nearest"] = label
+    row["score_text"] = score_text
+    row["model"] = backend
     row["overlay"] = overlay_text(row, label, score_text, cnn_human, backend)
     return row
 

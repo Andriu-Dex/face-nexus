@@ -1,10 +1,14 @@
 """Interfaz local: cámara o imagen, decisión, permisos e historial sin fotos."""
 
 import argparse
+import os
+import threading
 from pathlib import Path
 from time import monotonic, sleep
+from urllib.parse import urlsplit, urlunsplit
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
+import json
 
 import cv2
 
@@ -12,11 +16,29 @@ from scripts.access import default_permissions, simulate_authorize
 from scripts.calibrate_hog import ROTATE
 from scripts.dataset_capture import verify_vault
 from scripts.face_pipeline import load_detector
+from scripts.hog_knn import PEOPLE
 from scripts.latch_serial import latch_ready, ping_firmware, send_decision
 from scripts.live_k01 import HUMAN_RUN, build_identify, load_keras, paint_regions, recognize_frame
 from scripts.phone_serial_bench import local_stream_url
 from scripts.presentation_gate import PresentationGate, scene_kind
 
+
+BG = "#EDF2F6"
+SURFACE = "#FFFFFF"
+INK = "#142B3D"
+VIEWER = "#122636"
+ACCENT = "#006B68"
+DENIED_INK = "#7A2436"
+WAIT_INK = "#4A5C6A"
+HINT = "#D7E3EC"
+MAP_PARTS = ("private", "identity_labels.json")
+NAME_MAP = Path(__file__).resolve().parents[1] / "private" / "external_frames_mapping_20261117.json"
+DEFAULT_VAULT = Path("V:/FaceNexus")
+DEFAULT_CAM_PORT = 8080
+HISTORY_LIMIT = 40
+CAMERA_MODEL = "identity_four_v2 · k-NN"
+BOX_TTL = 0.45
+RESULT_MAX_AGE = 1.0
 
 SPANISH = {
     "K01": "K01",
@@ -26,6 +48,16 @@ SPANISH = {
     "UNKNOWN": "Desconocido",
     "GRANTED": "Autorizado",
     "DENIED": "Denegado",
+    "authorized": "identidad con permiso",
+    "no_face": "sin rostro",
+    "unknown_identity": "identidad desconocida",
+    "permission_inactive": "permiso inactivo",
+    "model_unavailable": "modelo no verificado",
+    "multiple_faces": "varios rostros ambiguos",
+    "exception": "fallo interno",
+    "not_human": "no humano",
+    "SIGNAL_LOST": "Señal perdida",
+    "REARM": "Siguiente presentación",
 }
 
 
@@ -36,77 +68,526 @@ def may_send_physical(source, kind, gate, recognition_actuation=False):
     return gate.on_frame(kind)
 
 
+def _read_json_object(path):
+    if not Path(path).is_file():
+        return {}
+    try:
+        payload = json.loads(Path(path).read_text(encoding="utf-8-sig"))
+    except (OSError, json.JSONDecodeError, UnicodeError):
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
+def load_identity_labels(vault, fallback=NAME_MAP):
+    """Mapa privado código → etiqueta. Si falta, se usa el código."""
+    labels = {}
+    payload = _read_json_object(Path(vault).joinpath(*MAP_PARTS))
+    for person in PEOPLE:
+        value = payload.get(person)
+        if isinstance(value, str) and value.strip():
+            labels[person] = value.strip()
+    if labels:
+        return labels
+    inverted = _read_json_object(fallback) if fallback else {}
+    for name, code in inverted.items():
+        if code in PEOPLE and isinstance(name, str) and name.strip() and code not in labels:
+            labels[code] = name.strip()
+    return labels
+
+
+def display_person(person, labels):
+    if person not in PEOPLE:
+        return SPANISH.get(person, person)
+    extra = labels.get(person)
+    return f"{person} · {extra}" if extra else person
+
+
+def decision_view(outcome, reason, identity, labels, face_seen=False):
+    """Texto y color para autorización, denegación, espera o señal perdida."""
+    if outcome == "GRANTED":
+        tone, title = ACCENT, "Autorizado"
+    elif outcome == "DENIED":
+        tone, title = DENIED_INK, "Denegado"
+    elif outcome == "SIGNAL_LOST":
+        tone, title = WAIT_INK, "Señal perdida"
+    else:
+        tone, title = WAIT_INK, "Espera"
+    if outcome == "SIGNAL_LOST" or not identity:
+        who = "—"
+    else:
+        who = display_person(identity, labels)
+    detail = SPANISH.get(reason, reason or "sin presentación")
+    if outcome == "SIGNAL_LOST":
+        detail = "sin fotograma de cámara; la autorización anterior no sigue vigente"
+    elif outcome == "DENIED" and reason == "unknown_identity" and face_seen:
+        detail = "Rostro detectado · identidad no confirmada"
+    return {
+        "tone": tone,
+        "title": title,
+        "identity": who,
+        "detail": f"{title} · {detail}",
+        "caption": f"{who}",
+    }
+
+
+def technical_lines(scene, labels):
+    """Causa, modelo y distancias. El candidato rechazado no autoriza."""
+    if not scene:
+        return "Sin medición."
+    regions = scene.get("regions") or []
+    row = next((item for item in regions if item.get("nearest")), regions[0] if regions else scene)
+    nearest = row.get("nearest")
+    access = display_person(scene.get("identity"), labels) if scene.get("identity") else "—"
+    lines = [
+        f"Modelo {row.get('model') or CAMERA_MODEL}",
+        f"Causa: {SPANISH.get(scene.get('reason'), scene.get('reason') or '—')}",
+        f"Identidad de acceso: {access}",
+    ]
+    if nearest:
+        lines.append(f"Candidato diagnóstico: {display_person(nearest, labels)}")
+    score = row.get("score_text")
+    if score:
+        lines.append(score)
+    return "\n".join(lines)
+
+
+def history_key(scene, source):
+    origin = "camera" if source == "camera" else str(source)
+    return (scene.get("outcome"), scene.get("reason"), scene.get("identity"), origin)
+
+
+def camera_config_path():
+    root = os.environ.get("LOCALAPPDATA") or str(Path.home())
+    return Path(root) / "FaceNexus" / "operator_camera.json"
+
+
+def load_camera_config(path=None):
+    payload = _read_json_object(path or camera_config_path())
+    url = payload.get("url") if isinstance(payload.get("url"), str) else ""
+    ip = payload.get("ip") if isinstance(payload.get("ip"), str) else ""
+    port = payload.get("camera_port")
+    rotation = payload.get("rotation", 0)
+    try:
+        rotation = int(rotation)
+    except (TypeError, ValueError):
+        rotation = 0
+    if rotation not in ROTATE:
+        rotation = 0
+    return {
+        "url": url.strip(),
+        "ip": ip.strip(),
+        "camera_port": str(port or DEFAULT_CAM_PORT),
+        "rotation": rotation,
+    }
+
+
+def save_camera_config(url, ip, camera_port, rotation, path=None):
+    path = Path(path or camera_config_path())
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps({
+            "url": url,
+            "ip": ip,
+            "camera_port": str(camera_port),
+            "rotation": int(rotation),
+        }, indent=2), encoding="utf-8")
+        return True
+    except OSError:
+        return False
+
+
+def split_camera_fields(url):
+    if not url:
+        return "", str(DEFAULT_CAM_PORT)
+    parts = urlsplit(url)
+    host = parts.hostname or ""
+    port = parts.port or DEFAULT_CAM_PORT
+    return host, str(port)
+
+
+class LatestSlot:
+    """Un solo hueco: el consumidor siempre ve el ítem más reciente."""
+
+    def __init__(self):
+        self._lock = threading.Lock()
+        self._item = None
+        self.dropped = 0
+
+    def put(self, item):
+        with self._lock:
+            if self._item is not None:
+                self.dropped += 1
+            self._item = item
+
+    def peek(self):
+        with self._lock:
+            return self._item
+
+    def clear(self):
+        with self._lock:
+            self._item = None
+
+
+def open_cv_capture(url):
+    capture = cv2.VideoCapture()
+    ok = capture.open(url, cv2.CAP_FFMPEG, [
+        cv2.CAP_PROP_OPEN_TIMEOUT_MSEC, 3500, cv2.CAP_PROP_READ_TIMEOUT_MSEC, 400,
+    ])
+    if not ok:
+        capture.release()
+        return None
+    return capture
+
+
+def launch_preflight(repo_root, vault=DEFAULT_VAULT):
+    """Comprueba .venv y el volumen antes de abrir la interfaz."""
+    python = Path(repo_root) / ".venv" / "Scripts" / "python.exe"
+    if not python.is_file():
+        return False, "Falta el entorno virtual .venv. Prepara el entorno en el repositorio."
+    if not Path(vault).is_dir():
+        return False, (
+            "No está montado V:\\FaceNexus. Monta el volumen VeraCrypt y vuelve a abrir FaceNexus.")
+    return True, str(python)
+
+
+def _camera_port_number(port):
+    try:
+        number = int(str(port if port not in (None, "") else DEFAULT_CAM_PORT))
+    except (TypeError, ValueError) as error:
+        raise ValueError("El puerto de cámara debe ser un número, por ejemplo 8080.") from error
+    if not 1 <= number <= 65535:
+        raise ValueError("El puerto de cámara no es válido.")
+    return number
+
+
+def parse_camera_url(text, port=None):
+    """IP, IP:puerto, o URL completa. El puerto serie no entra aquí."""
+    raw = (text or "").strip()
+    if not raw:
+        raise ValueError("Indica la IP local del celular.")
+    try:
+        if "://" not in raw and raw.count(":") == 1 and "/" not in raw:
+            host, maybe_port = raw.split(":")
+            if host and maybe_port.isdigit():
+                number = _camera_port_number(maybe_port)
+                return local_stream_url(f"http://{host}:{number}/video")
+        if "://" in raw or "/" in raw:
+            candidate = raw if "://" in raw else f"http://{raw}"
+            parts = urlsplit(candidate)
+            if not parts.path or parts.path == "/":
+                candidate = urlunsplit((parts.scheme, parts.netloc, "/video", parts.query, ""))
+            return local_stream_url(candidate)
+        number = _camera_port_number(port)
+        return local_stream_url(f"http://{raw}:{number}/video")
+    except argparse.ArgumentTypeError as error:
+        raise ValueError(
+            "Indica la IP local del celular, IP:puerto o la URL HTTP del IP Webcam.") from error
+
+
+def fit_bgr(frame, max_w, max_h):
+    height, width = frame.shape[:2]
+    scale = min(max(1, max_w) / width, max(1, max_h) / height, 1.)
+    size = max(1, int(width * scale)), max(1, int(height * scale))
+    if size != (width, height):
+        frame = cv2.resize(frame, size, interpolation=cv2.INTER_AREA)
+    return frame
+
+
+def viewer_layout(frame, canvas_w, canvas_h):
+    shown = fit_bgr(frame, canvas_w, canvas_h)
+    shown_h, shown_w = shown.shape[:2]
+    origin_x = (canvas_w - shown_w) // 2
+    origin_y = (canvas_h - shown_h) // 2
+    return shown, origin_x, origin_y, shown_w, shown_h
+
+
+def overlay_boxes(scene):
+    boxes = []
+    for row in scene.get("regions") or []:
+        box = row.get("box")
+        if box:
+            boxes.append({"box": list(box), "granted": row.get("outcome") == "GRANTED"})
+    return boxes
+
+
 class OperatorApp:
-    def __init__(self, vault, models, url, rotation, port):
-        self.vault = vault
+    def __init__(self, recognize, *, model_ready=True, reason="", url="", rotation=0,
+                 port=None, labels=None, config_path=None, open_capture=None):
+        self._core = recognize
+        self.model_ready = model_ready
+        self.open_capture = open_capture or open_cv_capture
+        self.config_path = Path(config_path) if config_path else camera_config_path()
+        saved = load_camera_config(self.config_path)
         self.url = url
-        self.rotation = ROTATE[rotation]
+        if not self.url and saved.get("url"):
+            try:
+                self.url = parse_camera_url(saved["url"])
+            except ValueError:
+                self.url = ""
+        if not self.url and saved["ip"]:
+            try:
+                self.url = parse_camera_url(saved["ip"], saved["camera_port"])
+            except ValueError:
+                self.url = ""
+        self.camera_ip, self.camera_port = split_camera_fields(self.url)
+        if not self.camera_port:
+            self.camera_port = saved["camera_port"]
+        self.rotation_deg = rotation or saved["rotation"]
+        self.rotation = ROTATE[self.rotation_deg]
         self.port = port
+        self.labels = labels or {}
         self.connection = None
         self.capture = None
         self.latch_ok = False
         self.gate = PresentationGate()
         self.ack_text = "sin acuse"
-        self.lock_text = "posición no confirmada"
+        self.lock_text = "posición no confirmada · simulación"
         self.permissions = default_permissions()
         self.history = []
-        human = load_keras(vault / "experiments" / "human_cnn" / HUMAN_RUN / "model.keras")
-        identify, model_ready, reason = build_identify(vault, "knn", 0.)
-        self.model_ready = model_ready
-        detector = load_detector(models)
-        self.recognize = lambda frame: recognize_frame(
-            frame, detector, human, identify, self.permissions, "knn",
-            model_ready=model_ready)
+        self._hist_key = None
+        self._hist_count = 0
+        self._last_bgr = None
+        self._frame_stale = False
+        self.hold_file = False
+        self._file_caption = False
+        self._live_requested = False
+        self.photo = None
+        self.cam_state = "idle"
+        self._cam_gen = 0
+        self._stop = threading.Event()
+        self._preview_slot = LatestSlot()
+        self._result_slot = LatestSlot()
+        self._seq = 0
+        self._done_seq = 0
+        self._shown_seq = 0
+        self._published_seq = 0
+        self._overlay = None
+        self._view_seq = None
+        self._paint_key = None
+        self._capture_thread = None
+        self._infer_thread = None
+        self.metrics = {"view_fps": 0.0, "infer_ms": 0.0, "frame_age_ms": 0.0}
+        self._view_times = []
+        self._tick_alive = True
+        self._ui_lock = threading.Lock()
+        self._ui_queue = []
         self.window = tk.Tk()
         self.window.title("FaceNexus")
-        self.photo = None
+        self.window.configure(bg=BG)
+        self.window.minsize(1100, 640)
+        self.window.geometry("1280x720")
         self._build()
         if not model_ready:
-            self.status.config(text=f"Modelo no verificado ({reason}). Todo denegado.")
+            self._set_status(f"Modelo no verificado ({reason}). Todo denegado.")
         if port:
             self._open_port(port)
-        self.window.after(40, self._tick)
+        self._refresh_rearm()
+
+    def _schedule_tick(self):
+        if self._tick_alive:
+            self._tick_id = self.window.after(40, self._tick)
+
+    def _font(self, size, *, bold=False):
+        return ("Segoe UI", size, "bold" if bold else "normal")
 
     def _build(self):
-        left = ttk.Frame(self.window, padding=8)
-        left.grid(row=0, column=0, sticky="nsew")
-        self.canvas = tk.Label(left, text="Sin imagen", width=80, height=20)
-        self.canvas.pack()
-        self.status = ttk.Label(left, text="Listo", font=("Segoe UI", 14))
-        self.status.pack(pady=8)
-        self.decision_lbl = ttk.Label(left, text="Decisión: —")
-        self.decision_lbl.pack(anchor="w")
-        self.ack_lbl = ttk.Label(left, text="Acuse ESP32: —")
-        self.ack_lbl.pack(anchor="w")
-        self.lock_lbl = ttk.Label(left, text="Pestillo: posición no confirmada")
-        self.lock_lbl.pack(anchor="w")
-        btns = ttk.Frame(left)
-        btns.pack()
-        ttk.Button(btns, text="Cámara", command=self._start_camera).pack(side=tk.LEFT, padx=4)
-        ttk.Button(btns, text="Abrir imagen…", command=self._open_image).pack(side=tk.LEFT, padx=4)
-        ttk.Button(btns, text="Probar carpeta…", command=self._open_folder).pack(side=tk.LEFT, padx=4)
-        ttk.Button(btns, text="Siguiente presentación", command=self._rearm).pack(side=tk.LEFT, padx=4)
-        right = ttk.Frame(self.window, padding=8)
-        right.grid(row=0, column=1, sticky="ns")
-        ttk.Label(right, text="Permisos (sin reentrenar)").pack(anchor="w")
+        self.window.columnconfigure(0, weight=1)
+        self.window.rowconfigure(1, weight=1)
+        bar = tk.Frame(self.window, bg=SURFACE, padx=20, pady=10)
+        bar.grid(row=0, column=0, sticky="ew")
+        bar.columnconfigure(0, weight=1)
+        tk.Label(bar, text="FaceNexus", font=self._font(18, bold=True), fg=INK, bg=SURFACE
+                 ).grid(row=0, column=0, sticky="w")
+        tk.Label(bar, text="Simulación", font=self._font(11), fg=ACCENT, bg=SURFACE
+                 ).grid(row=0, column=1, sticky="e")
+
+        body = tk.Frame(self.window, bg=BG)
+        body.grid(row=1, column=0, sticky="nsew", padx=16, pady=(0, 16))
+        body.columnconfigure(0, weight=1)
+        body.rowconfigure(0, weight=1)
+
+        stage = tk.Frame(body, bg=BG)
+        stage.grid(row=0, column=0, sticky="nsew", padx=(0, 12))
+        stage.rowconfigure(0, weight=1)
+        stage.rowconfigure(1, minsize=56)
+        stage.columnconfigure(0, weight=1)
+        self.viewer = tk.Canvas(stage, bg=VIEWER, highlightthickness=0, cursor="arrow")
+        self.viewer.grid(row=0, column=0, sticky="nsew")
+        self.viewer.bind("<Configure>", lambda _event: self._paint_viewer(force=True))
+        self._hint_id = None
+
+        controls = tk.Frame(stage, bg=BG, pady=10)
+        controls.grid(row=1, column=0, sticky="ew")
+        self.cam_btn = tk.Button(
+            controls, text="Cámara", command=self._camera_dialog, font=self._font(11, bold=True),
+            bg=ACCENT, fg=SURFACE, activebackground="#005955", activeforeground=SURFACE,
+            relief="flat", padx=18, pady=8, cursor="hand2")
+        self.cam_btn.pack(side=tk.LEFT)
+        self.stop_btn = tk.Button(
+            controls, text="Detener video", command=self._stop_camera, font=self._font(10),
+            bg=SURFACE, fg=INK, relief="flat", padx=12, pady=8, cursor="hand2", state="disabled")
+        self.stop_btn.pack(side=tk.LEFT, padx=(8, 0))
+        tk.Button(controls, text="Abrir imagen", command=self._open_image, font=self._font(10),
+                  bg=SURFACE, fg=INK, relief="flat", padx=12, pady=8, cursor="hand2"
+                  ).pack(side=tk.LEFT, padx=(8, 0))
+        tk.Button(controls, text="Probar carpeta", command=self._open_folder, font=self._font(10),
+                  bg=SURFACE, fg=INK, relief="flat", padx=12, pady=8, cursor="hand2"
+                  ).pack(side=tk.LEFT, padx=(8, 0))
+        self.rearm_btn = tk.Button(
+            controls, text="Siguiente presentación", command=self._rearm, font=self._font(10),
+            bg=SURFACE, fg=INK, relief="flat", padx=12, pady=8, cursor="hand2")
+        self.rearm_btn.pack(side=tk.LEFT, padx=(16, 0))
+        self.cam_state_lbl = tk.Label(controls, text="", font=self._font(9), fg=WAIT_INK, bg=BG)
+        self.cam_state_lbl.pack(side=tk.LEFT, padx=(16, 0))
+        self.hint_lbl = tk.Label(controls, text="", font=self._font(9), fg=WAIT_INK, bg=BG)
+        self.hint_lbl.pack(side=tk.LEFT, padx=(8, 0))
+
+        side = tk.Frame(body, bg=SURFACE, width=320, padx=16, pady=16)
+        side.grid(row=0, column=1, sticky="ns")
+        side.grid_propagate(False)
+        tk.Label(side, text="Decisión", font=self._font(9), fg=WAIT_INK, bg=SURFACE).pack(anchor="w")
+        self.decision_title = tk.Label(side, text="Espera", font=self._font(22, bold=True),
+                                       fg=WAIT_INK, bg=SURFACE, anchor="w")
+        self.decision_title.pack(anchor="w", pady=(2, 0))
+        self.identity_lbl = tk.Label(side, text="Identidad: —", font=self._font(12),
+                                     fg=INK, bg=SURFACE, anchor="w", wraplength=280)
+        self.identity_lbl.pack(anchor="w", pady=(4, 0))
+        self.detail_lbl = tk.Label(side, text="Aún no hay una presentación.", font=self._font(10),
+                                   fg=WAIT_INK, bg=SURFACE, anchor="w", wraplength=280, justify="left")
+        self.detail_lbl.pack(anchor="w", pady=(4, 8))
+        self.tech_var = tk.BooleanVar(value=False)
+        tk.Checkbutton(
+            side, text="Detalle técnico", variable=self.tech_var, command=self._refresh_tech,
+            font=self._font(9), fg=WAIT_INK, bg=SURFACE, activebackground=SURFACE,
+            selectcolor=SURFACE, anchor="w").pack(anchor="w")
+        self.tech_lbl = tk.Label(side, text="", font=self._font(8), fg=WAIT_INK, bg=SURFACE,
+                                 anchor="w", justify="left", wraplength=280)
+        self.tech_lbl.pack(anchor="w", pady=(0, 8))
+        self._scene = {}
+
+        tk.Label(side, text="Permisos", font=self._font(9), fg=WAIT_INK, bg=SURFACE).pack(anchor="w")
         self.perm_vars = {}
         for person in self.permissions:
             var = tk.BooleanVar(value=self.permissions[person])
             self.perm_vars[person] = var
-            ttk.Checkbutton(right, text=person, variable=var,
-                            command=self._sync_permissions).pack(anchor="w")
-        ttk.Label(right, text="Historial técnico (sin imágenes)").pack(anchor="w", pady=(12, 0))
-        self.log = tk.Listbox(right, width=48, height=18)
-        self.log.pack()
-        ttk.Label(
-            right,
-            text="Reconocimiento sin pestillo. Extraños y humano/no humano se evalúan aparte. "
-                 "«Siguiente presentación» cuando la persona salga. Archivos: solo predicción.",
-        ).pack(anchor="w")
+            tk.Checkbutton(
+                side, text=display_person(person, self.labels), variable=var,
+                command=self._sync_permissions, font=self._font(10), fg=INK, bg=SURFACE,
+                activebackground=SURFACE, selectcolor=SURFACE, anchor="w",
+            ).pack(anchor="w")
+
+        tk.Label(side, text="Historial", font=self._font(9), fg=WAIT_INK, bg=SURFACE
+                 ).pack(anchor="w", pady=(14, 4))
+        log_frame = tk.Frame(side, bg=SURFACE)
+        log_frame.pack(fill="both", expand=True)
+        scroll = tk.Scrollbar(log_frame)
+        scroll.pack(side=tk.RIGHT, fill="y")
+        self.log = tk.Listbox(
+            log_frame, width=34, height=10, font=self._font(9), fg=INK, bg=BG,
+            relief="flat", yscrollcommand=scroll.set, activestyle="none")
+        self.log.pack(side=tk.LEFT, fill="both", expand=True)
+        scroll.config(command=self.log.yview)
+
+        self.hw_lbl = tk.Label(side, text="", font=self._font(8), fg=WAIT_INK, bg=SURFACE,
+                               wraplength=280, justify="left", anchor="w")
+        self.hw_lbl.pack(anchor="w", pady=(10, 0))
+        self.status = tk.Label(side, text="Listo", font=self._font(8), fg=WAIT_INK, bg=SURFACE,
+                               wraplength=280, justify="left", anchor="w")
+        self.status.pack(anchor="w", pady=(4, 0))
+        self._refresh_hw()
+        self._paint_viewer()
+
+    def _set_status(self, text):
+        self.status.config(text=text)
+
+    def _overlay_key(self):
+        layer = self._overlay
+        if not layer:
+            return None
+        return (layer["until"], len(layer["boxes"]), layer["gen"])
+
+    def _paint_viewer(self, force=False):
+        width = max(self.viewer.winfo_width(), 2)
+        height = max(self.viewer.winfo_height(), 2)
+        key = (self._view_seq, self._overlay_key(), self._file_caption, self._frame_stale, width, height)
+        if not force and key == self._paint_key and self._last_bgr is not None:
+            return
+        self._paint_key = key
+        self.viewer.delete("all")
+        self.viewer.create_rectangle(0, 0, width, height, fill=VIEWER, outline="")
+        if self._last_bgr is None:
+            self.viewer.create_text(
+                width // 2, height // 2, text="Abre una imagen o conecta la cámara",
+                fill=HINT, font=self._font(14), tags="hint")
+            return
+        shown, origin_x, origin_y, shown_w, shown_h = viewer_layout(self._last_bgr, width, height)
+        rgb = cv2.cvtColor(shown, cv2.COLOR_BGR2RGB)
+        header = f"P6 {rgb.shape[1]} {rgb.shape[0]} 255 ".encode("ascii")
+        self.photo = tk.PhotoImage(master=self.viewer, data=header + rgb.tobytes())
+        self.viewer.create_image(width // 2, height // 2, image=self.photo, anchor="center")
+        self._draw_overlay(origin_x, origin_y, shown_w, shown_h)
+        if self._file_caption:
+            self.viewer.create_text(
+                width // 2, height - 28, text="Predicción de archivo",
+                fill=HINT, font=self._font(12), tags="file")
+        elif self._frame_stale:
+            self.viewer.create_text(
+                width // 2, height - 28, text="Anterior · señal perdida",
+                fill=HINT, font=self._font(12), tags="stale")
+
+    def _draw_overlay(self, origin_x, origin_y, shown_w, shown_h):
+        layer = self._overlay
+        if not layer:
+            return
+        src_h, src_w = layer["size"]
+        if src_w < 1 or src_h < 1:
+            return
+        for item in layer["boxes"]:
+            left, top, right, bottom = item["box"]
+            color = ACCENT if item["granted"] else "#C45C6A"
+            self.viewer.create_rectangle(
+                origin_x + left * shown_w / src_w,
+                origin_y + top * shown_h / src_h,
+                origin_x + right * shown_w / src_w,
+                origin_y + bottom * shown_h / src_h,
+                outline=color, width=3, tags="box")
+
+    def _set_cam_state(self, state, text=""):
+        self.cam_state = state
+        labels = {
+            "connecting": "Conectando",
+            "live": "En vivo",
+            "lost": "Señal perdida",
+            "stopped": "Video detenido",
+            "idle": "",
+        }
+        self.cam_state_lbl.config(text=text or labels.get(state, ""))
+        live = state in ("connecting", "live", "lost") and not self._stop.is_set()
+        self.stop_btn.config(state=("normal" if live or self.capture is not None else "disabled"))
+
+    def _show_decision(self, scene):
+        self._scene = scene
+        face_seen = bool(scene.get("regions"))
+        view = decision_view(scene.get("outcome"), scene.get("reason"), scene.get("identity"),
+                             self.labels, face_seen=face_seen)
+        self.decision_title.config(text=view["title"], fg=view["tone"])
+        self.identity_lbl.config(text=f"Identidad: {view['identity']}")
+        self.detail_lbl.config(text=view["detail"])
+        self._refresh_tech()
+
+    def _refresh_tech(self):
+        if self.tech_var.get():
+            self.tech_lbl.config(text=technical_lines(self._scene, self.labels))
+        else:
+            self.tech_lbl.config(text="")
+
+    def _refresh_rearm(self):
+        self.rearm_btn.config(state=("normal" if not self.gate.can_send else "disabled"))
 
     def _rearm(self):
         self.gate.rearm()
-        self.log.insert(0, "operador: siguiente presentación")
+        self._record({"outcome": "REARM", "reason": "rearm", "identity": None}, "operador")
+        self._refresh_rearm()
 
     def _sync_permissions(self):
         for person, var in self.perm_vars.items():
@@ -124,7 +605,7 @@ class OperatorApp:
             if not self.latch_ok:
                 self.connection.close()
                 self.connection = None
-                self.lock_text = "envío deshabilitado (no es firmware LATCH)"
+                self.lock_text = "simulación · firmware no LATCH"
                 messagebox.showwarning("Serie", f"Firmware {pong}. No se envían órdenes.")
         except (OSError, ValueError, TimeoutError) as error:
             messagebox.showwarning("Serie", f"No se abrió {port}: {error}")
@@ -132,7 +613,6 @@ class OperatorApp:
         self._refresh_hw()
 
     def _invalidate_port(self):
-        """Tras un error de transporte hay que volver a comprobar el firmware."""
         if self.connection is not None:
             try:
                 self.connection.close()
@@ -141,77 +621,395 @@ class OperatorApp:
         self.connection = None
         self.latch_ok = False
         self.gate.note_fault()
-        self.lock_text = "puerto invalidado; verificar firmware LATCH"
+        self.lock_text = "simulación · puerto invalidado"
+        self._refresh_rearm()
+
+    def _camera_dialog(self):
+        dialog = tk.Toplevel(self.window)
+        dialog.title("Cámara")
+        dialog.configure(bg=SURFACE)
+        dialog.transient(self.window)
+        dialog.grab_set()
+        ip_value, port_value = split_camera_fields(self.url)
+        tk.Label(dialog, text="IP del celular", font=self._font(10), fg=INK, bg=SURFACE
+                 ).pack(anchor="w", padx=16, pady=(16, 4))
+        ip_var = tk.StringVar(value=ip_value or self.camera_ip)
+        entry = tk.Entry(dialog, textvariable=ip_var, width=42, font=self._font(10))
+        entry.pack(padx=16, fill="x")
+        tk.Label(dialog, text="Puerto de cámara", font=self._font(10), fg=INK, bg=SURFACE
+                 ).pack(anchor="w", padx=16, pady=(12, 4))
+        port_var = tk.StringVar(value=port_value or str(DEFAULT_CAM_PORT))
+        tk.Entry(dialog, textvariable=port_var, width=12, font=self._font(10)).pack(
+            padx=16, anchor="w")
+        tk.Label(dialog, text="Orientación", font=self._font(10), fg=INK, bg=SURFACE
+                 ).pack(anchor="w", padx=16, pady=(12, 4))
+        rot_var = tk.IntVar(value=self.rotation_deg)
+        rot = ttk.Combobox(dialog, textvariable=rot_var, values=(0, 90, 180, 270), state="readonly")
+        rot.pack(padx=16, fill="x")
+        note = tk.Label(
+            dialog,
+            text="IP Webcam: 192.168.1.20 y puerto 8080, o 192.168.1.20:8080, o la URL completa. El puerto serie del pestillo es otro campo.",
+            font=self._font(8), fg=WAIT_INK, bg=SURFACE, wraplength=360, justify="left")
+        note.pack(anchor="w", padx=16, pady=8)
+
+        def connect():
+            try:
+                self.url = parse_camera_url(ip_var.get(), port_var.get())
+            except ValueError as error:
+                note.config(text=str(error), fg=DENIED_INK)
+                return
+            self.camera_ip, self.camera_port = split_camera_fields(self.url)
+            self.rotation_deg = int(rot_var.get())
+            self.rotation = ROTATE[self.rotation_deg]
+            saved = save_camera_config(
+                self.url, self.camera_ip, self.camera_port, self.rotation_deg,
+                self.config_path)
+            dialog.destroy()
+            if not saved:
+                messagebox.showwarning(
+                    "Cámara",
+                    "No se guardó la configuración local. Se usa en esta sesión.")
+            self._start_camera()
+
+        tk.Button(dialog, text="Conectar", command=connect, bg=ACCENT, fg=SURFACE,
+                  font=self._font(10, bold=True), relief="flat", padx=12, pady=6).pack(pady=(0, 16))
+        entry.focus_set()
+
+    def _ui(self, fn):
+        with self._ui_lock:
+            self._ui_queue.append(fn)
+
+    def _drain_ui(self):
+        with self._ui_lock:
+            jobs = list(self._ui_queue)
+            self._ui_queue.clear()
+        for job in jobs:
+            job()
 
     def _start_camera(self):
-        if self.capture is not None:
-            self.capture.release()
-            self.gate.note_disconnect()
-        self.capture = cv2.VideoCapture()
-        ok = self.capture.open(self.url, cv2.CAP_FFMPEG, [
-            cv2.CAP_PROP_OPEN_TIMEOUT_MSEC, 3500, cv2.CAP_PROP_READ_TIMEOUT_MSEC, 400,
-        ])
-        if not ok:
-            messagebox.showerror("Cámara", "No hay stream.")
-            self.capture = None
-            self.gate.note_fault()
+        if not self.url:
+            self.hint_lbl.config(text="Falta la IP o la URL del IP Webcam.")
+            messagebox.showinfo("Cámara", "Indica la IP local del celular o la URL HTTP antes de conectar.")
+            return
+        self._stop_camera(invalidate=self.cam_state in ("live", "lost") and not self.hold_file)
+        self._stop.clear()
+        self._live_requested = True
+        self._cam_gen += 1
+        gen = self._cam_gen
+        self._preview_slot.clear()
+        self._result_slot.clear()
+        self._clear_overlay()
+        self._published_seq = 0
+        self.hint_lbl.config(text="")
+        self._set_cam_state("connecting")
+        self.stop_btn.config(state="normal")
+        self._capture_thread = threading.Thread(
+            target=self._capture_loop, args=(self.url, gen), daemon=True)
+        self._infer_thread = threading.Thread(
+            target=self._infer_loop, args=(gen,), daemon=True)
+        self._capture_thread.start()
+        self._infer_thread.start()
+
+    def _stop_camera(self, invalidate=True):
+        self._cam_gen += 1
+        self._stop.set()
+        self._live_requested = False
+        self.capture = None
+        self._preview_slot.clear()
+        self._result_slot.clear()
+        self._shown_seq = 0
+        self._published_seq = 0
+        self._clear_overlay()
+        self._refresh_rearm()
+        if invalidate:
+            self._invalidate_live_decision()
+        self._set_cam_state("stopped")
+        self.stop_btn.config(state="disabled")
+
+    def _invalidate_live_decision(self):
+        self.gate.note_disconnect()
+        self._refresh_rearm()
+        if self.hold_file:
+            self._file_caption = True
+            self._frame_stale = False
+            self._paint_viewer()
+            return
+        self._file_caption = False
+        self._frame_stale = self._last_bgr is not None
+        self._show_decision({
+            "outcome": "SIGNAL_LOST",
+            "reason": "camera_signal_lost",
+            "identity": None,
+        })
+        self._set_status("Cámara detenida · la autorización anterior no sigue vigente")
+        self._paint_viewer()
+
+    def _capture_loop(self, url, gen):
+        capture = self.open_capture(url)
+        if gen != self._cam_gen:
+            closer = getattr(capture, "release", None)
+            if capture is not None and closer is not None:
+                closer()
+            return
+        if capture is None:
+            self._ui(self._on_open_failed)
+            return
+        self.capture = capture
+        self._ui(lambda: self._set_cam_state("connecting"))
+        try:
+            while gen == self._cam_gen and not self._stop.is_set():
+                ok, frame = capture.read()
+                if not ok or frame is None:
+                    self._preview_slot.put({"kind": "lost", "at": monotonic()})
+                    self._ui(self._signal_lost)
+                    return
+                if self.rotation is not None:
+                    frame = cv2.rotate(frame, self.rotation)
+                self._seq += 1
+                self._preview_slot.put({
+                    "kind": "frame", "seq": self._seq, "bgr": frame, "at": monotonic(),
+                })
+        finally:
+            closer = getattr(capture, "release", None)
+            if closer is not None:
+                closer()
+            if self.capture is capture:
+                self.capture = None
+
+    def _on_open_failed(self):
+        self.hint_lbl.config(text="No hay stream. Revisa IP Webcam, la IP y el puerto de cámara.")
+        messagebox.showerror(
+            "Cámara",
+            "No hay stream. Abre IP Webcam en el celular y comprueba la IP y el puerto 8080.")
+        self._signal_lost()
+
+    def _infer_loop(self, gen):
+        while gen == self._cam_gen and not self._stop.is_set():
+            if not self._process_latest(gen):
+                sleep(0.01)
+
+    def _process_latest(self, gen=None):
+        item = self._preview_slot.peek()
+        if not item or item.get("kind") != "frame" or item["seq"] <= self._done_seq:
+            return False
+        self._done_seq = item["seq"]
+        frame = item["bgr"]
+        started = monotonic()
+        scene = self.recognize_frame(frame)
+        infer_ms = (monotonic() - started) * 1000
+        session = self._cam_gen if gen is None else gen
+        self._result_slot.put({
+            "seq": item["seq"],
+            "gen": session,
+            "scene": scene,
+            "infer_ms": infer_ms,
+            "captured_at": item["at"],
+            "size": frame.shape[:2],
+        })
+        return True
+
+    def _clear_overlay(self):
+        self._overlay = None
+        self._paint_key = None
 
     def _open_image(self):
         path = filedialog.askopenfilename(filetypes=[("Imagen", "*.png;*.jpg;*.jpeg")])
         if not path:
             return
-        frame = cv2.imread(path, cv2.IMREAD_COLOR)
+        self.apply_path(path, source="file")
+
+    def apply_path(self, path, source="file"):
+        frame = cv2.imread(str(path), cv2.IMREAD_COLOR)
         if frame is None:
             messagebox.showerror("Imagen", "No se pudo leer el archivo.")
-            return
-        self._apply(frame, source="file")
+            return None
+        return self._apply(frame, source=source)
 
     def _open_folder(self):
         folder = filedialog.askdirectory()
         if not folder:
             return
+        self.apply_folder(folder)
+
+    def apply_folder(self, folder):
         paths = sorted(Path(folder).glob("*.png"))[:40]
         granted = denied = 0
+        last = None
         for path in paths:
             frame = cv2.imread(str(path), cv2.IMREAD_COLOR)
             if frame is None:
                 continue
-            scene = self.recognize(frame)
+            scene = self.recognize_frame(frame)
             if scene["outcome"] == "GRANTED":
                 granted += 1
             else:
                 denied += 1
             self._record(scene, path.name)
-        self.status.config(text=f"Carpeta: {granted} autorizados, {denied} denegados (máx. 40 PNG).")
-        if paths:
-            last = cv2.imread(str(paths[-1]), cv2.IMREAD_COLOR)
-            if last is not None:
-                self._show(paint_regions(last, self.recognize(last).get("regions") or []))
+            last = path
+        self._set_status(f"Carpeta: {granted} autorizados, {denied} denegados (máx. 40 PNG).")
+        if last is not None:
+            frame = cv2.imread(str(last), cv2.IMREAD_COLOR)
+            if frame is not None:
+                scene = self.recognize_frame(frame)
+                self.hold_file = True
+                self._file_caption = True
+                self._frame_stale = False
+                self._last_bgr = paint_regions(frame, scene.get("regions") or [])
+                self._show_decision(scene)
+                self._paint_viewer()
+        return granted, denied
 
-    def _tick(self):
+    def _signal_lost(self):
+        """Fallo de cámara: deja de mostrar Autorizado de vivo y marca el fotograma."""
+        self.gate.note_fault()
+        self._preview_slot.clear()
+        self._result_slot.clear()
+        self._shown_seq = 0
+        self._published_seq = 0
+        self._clear_overlay()
+        self._refresh_rearm()
+        self._set_cam_state("lost")
+        self._record({
+            "outcome": "SIGNAL_LOST",
+            "reason": "camera_signal_lost",
+            "identity": None,
+        }, "camera")
+        if self.hold_file:
+            self._file_caption = True
+            self._frame_stale = False
+            self._paint_viewer()
+            return
+        self._file_caption = False
+        self._frame_stale = self._last_bgr is not None
+        self._show_decision({
+            "outcome": "SIGNAL_LOST",
+            "reason": "camera_signal_lost",
+            "identity": None,
+        })
+        self._set_status("Señal perdida · la autorización anterior no sigue vigente")
+        self._paint_viewer()
+
+    def _ingest_camera(self):
+        """Un ciclo síncrono para pruebas. El vivo usa hilos de captura e inferencia."""
+        if self.hold_file and not self._live_requested:
+            if self.capture is not None:
+                ok, frame = self.capture.read()
+                if not ok or frame is None:
+                    self._preview_slot.put({"kind": "lost", "at": monotonic()})
+                    self._signal_lost()
+            return
         if self.capture is not None:
             ok, frame = self.capture.read()
             if not ok or frame is None:
-                self.gate.note_fault()
-            else:
-                if self.rotation is not None:
-                    frame = cv2.rotate(frame, self.rotation)
-                self._apply(frame, source="camera")
-        self.window.after(40, self._tick)
+                self._preview_slot.put({"kind": "lost", "at": monotonic()})
+                self._signal_lost()
+                return
+            if self.rotation is not None:
+                frame = cv2.rotate(frame, self.rotation)
+            self._seq += 1
+            self._preview_slot.put({
+                "kind": "frame", "seq": self._seq, "bgr": frame, "at": monotonic(),
+            })
+        self._process_latest()
+        self._tick_view()
 
-    def _apply(self, frame, source):
-        scene = self.recognize(frame)
+    def _publish_result(self, result, now):
+        if not result or result["seq"] == self._published_seq:
+            return
+        self._published_seq = result["seq"]
+        self._shown_seq = result["seq"]
+        active = result.get("gen", self._cam_gen) == self._cam_gen and not self._stop.is_set()
+        age = now - result["captured_at"]
+        if not active or age > RESULT_MAX_AGE:
+            return
+        self.metrics["infer_ms"] = result["infer_ms"]
+        self._commit_scene(result["scene"], "camera")
+        boxes = overlay_boxes(result["scene"])
+        if boxes:
+            self._overlay = {
+                "boxes": boxes,
+                "until": now + BOX_TTL,
+                "gen": self._cam_gen,
+                "size": result["size"],
+            }
+        else:
+            self._overlay = None
+        if self.cam_state != "stopped":
+            self._set_cam_state("live")
+
+    def _expire_overlay(self, now):
+        layer = self._overlay
+        if not layer:
+            return
+        if layer["gen"] != self._cam_gen or now >= layer["until"] or self._stop.is_set():
+            self._overlay = None
+
+    def _tick_view(self):
+        preview = self._preview_slot.peek()
+        result = self._result_slot.peek()
+        now = monotonic()
+        self._publish_result(result, now)
+        had_overlay = self._overlay is not None
+        self._expire_overlay(now)
+        if preview and preview.get("kind") == "frame" and (
+                self._live_requested or not self.hold_file):
+            self.hold_file = False
+            self._file_caption = False
+            self._frame_stale = False
+            self.metrics["frame_age_ms"] = (now - preview["at"]) * 1000
+            self._last_bgr = preview["bgr"]
+            if preview["seq"] != self._view_seq:
+                self._view_seq = preview["seq"]
+                self._view_times.append(now)
+                cutoff = now - 1
+                self._view_times = [stamp for stamp in self._view_times if stamp >= cutoff]
+                self.metrics["view_fps"] = float(len(self._view_times))
+            self._paint_viewer()
+        elif self.hold_file and self.cam_state in ("lost", "connecting", "live"):
+            self._file_caption = True
+            self._paint_viewer()
+        elif had_overlay and self._overlay is None:
+            self._paint_viewer(force=True)
+
+    def _tick(self):
+        if not self._tick_alive:
+            return
+        self._drain_ui()
+        self._tick_view()
+        self._schedule_tick()
+
+    def recognize_frame(self, frame):
+        return self._core(frame, self.permissions)
+
+    def _commit_scene(self, scene, source):
         simulate_authorize({
             key: scene[key] for key in ("outcome", "reason", "identity")
         } | {"event_id": scene.get("event_id")})
         if may_send_physical(source, scene_kind(scene), self.gate):
             self._send_latch(scene)
-        self._show(paint_regions(frame, scene.get("regions") or []))
-        identity = SPANISH.get(scene["identity"], scene["identity"])
-        self.status.config(text=f"{SPANISH[scene['outcome']]} · {scene['reason']} · {identity}")
-        self.decision_lbl.config(text=f"Decisión: {scene['outcome']} {scene['reason']} {identity}")
+        self._refresh_rearm()
+        self._show_decision(scene)
+        identity = display_person(scene["identity"], self.labels)
+        extra = ""
+        if self.metrics["view_fps"] or self.metrics["infer_ms"]:
+            extra = (
+                f" · vista {self.metrics['view_fps']:.0f} fps"
+                f" · inferencia {self.metrics['infer_ms']:.0f} ms"
+                f" · edad {self.metrics['frame_age_ms']:.0f} ms")
+        self._set_status(
+            f"{SPANISH.get(scene['outcome'], scene['outcome'])} · "
+            f"{SPANISH.get(scene['reason'], scene['reason'])} · {identity}{extra}")
         self._refresh_hw()
         self._record(scene, source)
+
+    def _apply(self, frame, source):
+        scene = self.recognize_frame(frame)
+        self.hold_file = source != "camera"
+        self._file_caption = self.hold_file
+        self._frame_stale = False
+        self._last_bgr = paint_regions(frame, scene.get("regions") or [])
+        self._paint_viewer()
+        self._commit_scene(scene, source)
         return scene
 
     def _send_latch(self, scene):
@@ -223,7 +1021,7 @@ class OperatorApp:
             result = send_decision(self.connection, event, scene["identity"], "GRANTED")
             self.ack_text = result["ack"]
             self.lock_text = ("pulso acusado; posición no confirmada"
-                              if result["pulse_confirmed"] else "posición no confirmada")
+                              if result["pulse_confirmed"] else "simulación · posición no confirmada")
             self.log.insert(0, f"serie {result['ack']}")
         except (OSError, RuntimeError, TimeoutError, ValueError) as error:
             self.ack_text = f"error {error}"
@@ -231,43 +1029,77 @@ class OperatorApp:
             self.log.insert(0, f"pestillo error {error}")
 
     def _refresh_hw(self):
-        self.ack_lbl.config(text=f"Acuse ESP32: {self.ack_text}")
-        self.lock_lbl.config(text=f"Pestillo: {self.lock_text}")
+        port = self.port or "sin puerto"
+        if self.latch_ok:
+            mode = "firmware LATCH listo; el vivo no confirma el movimiento físico"
+        else:
+            mode = "simulación: no hay movimiento físico confirmado"
+        self.hw_lbl.config(text=f"Puerto {port} · {mode}\nAcuse: {self.ack_text}\n{self.lock_text}")
 
     def _record(self, scene, source):
-        line = f"{scene['outcome']} {scene['reason']} {scene['identity']} {source}"
+        key = history_key(scene, source)
+        if key == self._hist_key:
+            self._hist_count += 1
+            title = SPANISH.get(scene.get("outcome"), scene.get("outcome") or "estado")
+            who = display_person(scene.get("identity"), self.labels) if scene.get("identity") else "—"
+            line = f"{title} · {who} · {key[3]} ×{self._hist_count}"
+            if self.log.size():
+                self.log.delete(0)
+            self.log.insert(0, line)
+            if self.history:
+                self.history[-1] = line
+            return
+        self._hist_key = key
+        self._hist_count = 1
+        title = SPANISH.get(scene.get("outcome"), scene.get("outcome") or "estado")
+        who = display_person(scene.get("identity"), self.labels) if scene.get("identity") else "—"
+        line = f"{title} · {who} · {key[3]}"
         self.history.append(line)
         self.log.insert(0, line)
-        if self.log.size() > 200:
-            self.log.delete(200, tk.END)
-
-    def _show(self, frame):
-        rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-        height, width = rgb.shape[:2]
-        scale = min(1., 720 / max(height, width))
-        if scale < 1:
-            rgb = cv2.resize(rgb, (int(width * scale), int(height * scale)), interpolation=cv2.INTER_AREA)
-        header = f"P6 {rgb.shape[1]} {rgb.shape[0]} 255 ".encode("ascii")
-        self.photo = tk.PhotoImage(data=header + rgb.tobytes())
-        self.canvas.config(image=self.photo, text="", width=self.photo.width(), height=self.photo.height())
+        self.history = self.history[-HISTORY_LIMIT:]
+        while self.log.size() > HISTORY_LIMIT:
+            self.log.delete(HISTORY_LIMIT, tk.END)
 
     def run(self):
-        self.window.mainloop()
-        if self.capture is not None:
-            self.capture.release()
-        if self.connection is not None:
-            self.connection.close()
+        self._tick_alive = True
+        self._schedule_tick()
+        try:
+            self.window.mainloop()
+        finally:
+            self._stop.set()
+            self._cam_gen += 1
+            if self.connection is not None:
+                self.connection.close()
+
+
+def build_recognizer(vault, models):
+    human = load_keras(Path(vault) / "experiments" / "human_cnn" / HUMAN_RUN / "model.keras")
+    identify, model_ready, reason = build_identify(vault, "knn", 0.)
+    detector = load_detector(models)
+
+    def recognize(frame, permissions):
+        return recognize_frame(
+            frame, detector, human, identify, permissions, "knn",
+            model_ready=model_ready)
+
+    return recognize, model_ready, reason
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--vault", type=Path, required=True)
-    parser.add_argument("--url", type=local_stream_url, default="http://192.168.1.20:8080/video")
+    parser.add_argument("--url", default="", help="URL HTTP del IP Webcam. También se puede indicar en Cámara.")
     parser.add_argument("--rotation", type=int, choices=(0, 90, 180, 270), default=0)
     parser.add_argument("--models", type=Path, default=Path("models/verified"))
     parser.add_argument("--port", default="")
     args = parser.parse_args()
-    app = OperatorApp(verify_vault(args.vault), args.models, args.url, args.rotation, args.port or None)
+    vault = verify_vault(args.vault)
+    url = parse_camera_url(args.url) if args.url else ""
+    recognize, model_ready, reason = build_recognizer(vault, args.models)
+    app = OperatorApp(
+        recognize, model_ready=model_ready, reason=reason or "", url=url,
+        rotation=args.rotation, port=args.port or None,
+        labels=load_identity_labels(vault))
     app.run()
 
 
