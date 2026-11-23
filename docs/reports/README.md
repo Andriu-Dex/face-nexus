@@ -29,5 +29,18 @@ Estado al 22-11-2026. Los informes conservan las observaciones y decisiones de c
 | [23 · Cuatro identidades](23_four_identities_downloads.md) | Downloads TRAIN/VAL distintos; 31/39; interfaz y firmware del pestillo. |
 | [24 · Extraños y humano/no humano](24_unregistered_and_human.md) | LFW OTHER 6004/6537 aceptados con T=0,770; CNN 5+500; sin pestillo. |
 | [25 · Rechazo abierto](25_open_set_rejection.md) | T=0,530 y holgura 0,057: 60/6537 extraños; LOO TRAIN 78/120. |
+| [26 · VALIDATION con T y G](26_four_validation_open_set.md) | Downloads 13/39 con holgura; K02 0/9; sigue simulación. |
+| [27 · Cuatro + OTHER](27_four_other.md) | k-NN 19/39 inscritos, 2/2627 LFW; MLP/SVM cuelan extraños. Vivo sin cambio. |
+| [28 · Celular y veto CNN](28_phone_manifest_and_cnn_veto.md) | Manifiesto tune/eval; 20 caras 0 vetos indebidos; 1/60 fondos se cuelan. |
+| [29 · Eval lista y captura atómica](29_phone_eval_ready.md) | Ready estricto; extraños con IDs; staging; CNN diagnóstico. |
+| [30 · Recuperación y procedencia](30_lot_recovery_and_provenance.md) | No borrar lotes; staging tras fallo de rename; encuentro explícito y filas con huella. |
+| [31 · Candado y vínculo](31_lock_recovery_binding.md) | Lectura bajo candado; pendiente corrupto se conserva; calibración atada a la galería. |
+| [32 · Clave de lote y filas](32_lot_key_and_calibration_rows.md) | Staging exclusivo; calibración desde el NPZ usado, no desde una lista externa. |
+| [33 · Calibración del ensayo](33_calibration_trial_binding.md) | Huella de calibración en summary; NPZ ajeno o sin vectores no verifica. |
+| [34 · Tune del celular](34_phone_tune_training.md) | `--phone-tune` usa tune+OTHER; eval queda fuera del ajuste. |
+| [35 · Interfaz y arranque](35_operator_ui_redesign.md) | Visor grande, decisión lateral, FaceNexus.cmd en simulación. |
+| [36 · Rechazo visible](36_operator_rejection_path.md) | YuNet + T/G en pantalla; no se baja el umbral por una toma. |
+| [37 · Pipeline de vivo](37_live_pipeline_decouple.md) | Captura, inferencia y vista desacopladas; sin cola. |
+| [38 · Recuadro desacoplado](38_overlay_decouple.md) | Decisión y caja no exigen el mismo seq que la vista. |
 
 La calibración en vivo reúne tres presentaciones usables de un voluntario y tres del primer integrante. El software ya puede sondear el giro del celular e inspeccionar intentos incompletos. Hay galería de cuatro IDs con fotos de Downloads (VALIDATION 31/39; K02 se confunde con K03). El vivo autoriza a cualquier integrante con permiso en pantalla, no el pestillo. Extraños LFW no se rechazan con el T actual. El 22-11-2026 el ESP32 volvió a aparecer en COM5 y respondió `PONG FACENEXUS BENCH 1`; el firmware `latch` no se grabó y el SG90 no se observó. El celular del lunes sigue siendo el dominio de la defensa.

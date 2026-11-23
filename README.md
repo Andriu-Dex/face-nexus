@@ -4,6 +4,21 @@ Proyecto académico de reconocimiento facial y control de acceso físico. Identi
 
 **Estado:** documentación lista para implementar. En la entrega, el celular transmite el video a Windows y FaceNexus envía la decisión por USB serie al ESP-WROOM-32, que acciona el SG90 del pestillo de maqueta. La TMCAM y la extracción de referencia ya se verificaron para desarrollo local.
 
+## Arranque en Windows
+
+Doble clic en `FaceNexus.cmd` o, desde PowerShell en el repositorio, `.\FaceNexus.cmd`. El lanzador usa el Python de `.venv`, abre la interfaz en simulación y espera el volumen `V:\FaceNexus`. Funciona aunque la carpeta de trabajo sea otra. Si falla, monta VeraCrypt o prepara `.venv`. En **Cámara** se indican la IP del celular y el puerto (8080), `IP:puerto` o la URL completa. **Detener video** invalida la decisión de vivo. La captura, la inferencia y la vista van en hilos distintos; el estado muestra fps de vista, milisegundos de inferencia y edad local del fotograma. El puerto serie del pestillo es otro ajuste. La URL efectiva se guarda en `%LOCALAPPDATA%\FaceNexus\operator_camera.json`. Si no se puede guardar, se usa en esa sesión. Los argumentos de `python -m scripts.operator_ui` siguen valiendo para pruebas.
+
+Un mapa opcional `V:\FaceNexus\private\identity_labels.json` muestra el código junto a una etiqueta local. Las claves son solo `K01`–`K04`; el valor es texto. Si falta en el volumen, se puede leer la correspondencia local gitignored del repositorio. Si no hay mapa, se muestra el código. No versionar nombres. Ejemplo de forma (sin nombres reales):
+
+```json
+{
+  "K01": "etiqueta local",
+  "K02": "etiqueta local",
+  "K03": "etiqueta local",
+  "K04": "etiqueta local"
+}
+```
+
 ## Documentación
 
 1. [Requisitos y criterios de aceptación](docs/requirements.md).

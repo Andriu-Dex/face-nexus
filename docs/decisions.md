@@ -168,3 +168,31 @@ Resultados, tiempos, pruebas y archivos en [07_face_pipeline_validation.md](repo
 - D-68: la interfaz no envía el pestillo desde el reconocimiento. Extraños = LFW OTHER contra la galería de cuatro con T. Humano/no humano se mide aparte y no veta YuNet. Banco LATCH: órdenes `CHECK` con `--servo-disconnected`; no se flashea ni se engrana el SG90 en esta ronda.
 
 - D-69: rechazo abierto: aceptar solo si el ganador es K01–K04, `d ≤ T` y `d_otra − d ≥ G`. T=0,530 y G=0,057 se eligen para FAR ≤ 1 % en LFW TRAIN OTHER (60/6537). El T anterior 0,770 queda como `previous_max_distance`. El recall LOO de TRAIN baja a 78/120. No es TEST ni el celular del aula.
+
+- D-70: T y G se conservan como candidatos. VALIDATION de Downloads con ambos: 13/39, K02 0/9, 26 UNKNOWN. El reconocimiento no acciona el pestillo. Extraños disjuntos del aula, celular de demostración, ensayo K01–K04+externos y el papel de la CNN en la decisión siguen pendientes. El banco LATCH puede avanzar en paralelo con el SG90 desconectado.
+
+- D-71: el calibrador T/G maximiza aciertos de identidad y penaliza confusiones aceptadas, no el recuento bruto de aceptados. Ensayo exploratorio K01–K04+OTHER (LFW por identidad): gana k-NN (19/39 inscritos, 2/2627 LFW). MLP/SVM cuelan extraños. El vivo sigue en la política de cuatro clases. Banco LATCH exige `--v5-unplugged`; no se grabó firmware.
+
+- D-72: lotes del celular usan manifiesto privado `tune`/`eval`, ráfaga en una partición y aviso si falta una clase o hay hash cruzado. El candidato four+OTHER espera esos lotes; la UI sigue en simulación. Ensayo CNN-veto en el mismo cuarto: 0/20 caras vetadas, 1/60 parches se cuelan; el vivo no activa el veto.
+
+- D-73: `phone_eval_ready` exige manifiesto válido, recortes usables de las cuatro clases, encuentros `tune`/`eval` distintos y HOG cotejado. La disjunción de extraños queda sin verificar si no hay listas de IDs. Los informes de dominio usan `domain_<nombre>.json` sin sobrescribir. La captura valida huellas, publica en staging y recupera huérfanos. La CNN 0/20 y 1/60 es diagnóstico del lote de adaptación; el veto sigue apagado.
+
+- D-74: no se borra un lote en disco ausente del manifiesto. Un rename fallido conserva el staging registrado. El índice del celular lleva candado. El encuentro se nombra de forma explícita. Extraños e inscritos se cotejan por huella de archivo y por fila; el recuento no acredita disjunción. CNN y pestillo sin cambio.
+
+- D-75: el candado cubre lectura, validación y escritura; una revisión desactualizada se rechaza. Un pendiente registrado solo se publica si ficha, encuentro, fase, huellas y HOG coinciden; si no, se conserva. La disjunción se verifica solo con IDs de calibración atados a la galería del ensayo y extraños con sample_ids por fila.
+
+- D-76: la clave `(person_id, run_name)` se reserva creando el staging sin borrar un pendiente ajeno. La disjunción verificada exige filas de calibración leídas del NPZ usado (`sample_ids` e `identity_ids`); una lista externa con huella de galería no basta.
+
+- D-77: la procedencia de calibración se escribe al consumir LFW (NPZ con vectores, `sample_ids` e `identity_ids`, huella en `summary.json` ligada a la galería). El evaluador solo verifica disjunción si esa huella coincide y hay vectores. Un NPZ de otro ensayo o sin vectores queda sin verificar.
+
+- D-78: `--phone-tune` arma el ensayo K01–K04+OTHER con vectores `tune` del celular y OTHER de LFW. Exige las cuatro clases. Los lotes `eval` se cargan aparte y no entran al ajuste. El vivo sigue en simulación.
+
+- D-79: la interfaz Tkinter prioriza el visor y la decisión; Cámara configura URL y giro. FaceNexus.cmd arranca en simulación con `.venv` y `V:\FaceNexus`. El mapa de nombres es privado. El pestillo no se acciona desde el reconocimiento.
+
+- D-80: un fallo de lectura de cámara no conserva Autorizado. La decisión visible es Señal perdida, el último fotograma se marca como anterior y `note_fault` impide una orden física hasta el rearme del operador. Un archivo abierto no lo pisa el vivo hasta conectar de nuevo la cámara. El mapa `private/identity_labels.json` vive solo en el volumen.
+
+- D-81: la cámara se configura por IP y puerto 8080, distintos del puerto serie. Un YuNet rechazado muestra identidad no confirmada y el vecino k-NN como diagnóstico; T y G de `identity_four_v2` no se relajan. El historial agrupa fotogramas repetidos. La aprobación de K01 exige un encuentro nuevo, no la ráfaga previa.
+
+- D-82: detener o reconectar invalida la autorización de cámara. Un archivo se etiqueta como predicción de archivo. La URL efectiva (ruta incluida) se conserva; un fallo al guardar no impide conectar. Captura, inferencia y vista usan el fotograma más reciente, sin cola. Tkinter no abre el stream. T y G no cambian. El pestillo sigue en simulación.
+
+- D-83: cada resultado fresco se publica una vez con edad máxima y sesión activa, aunque la vista haya avanzado. El recuadro es una capa de Canvas con vigencia breve; no alarga la autorización. Se borra si el análisis siguiente no ve rostro, caduca o cambia la sesión. El FPS cuenta fotogramas distintos.
