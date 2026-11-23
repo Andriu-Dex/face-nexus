@@ -66,7 +66,7 @@ Tras reconectar el micro-USB, el Administrador de dispositivos volvió a listar 
 Cuando se grabe `firmware/latch`, el primer ensayo físico usa órdenes de prueba, no la cámara. El SG90 permanece desconectado o el mecanismo libre. Windows no envía `GRANTED` desde el reconocimiento hasta medir extraños y humano/no humano.
 
 ```powershell
-.\.venv\Scripts\python.exe -m scripts.latch_command_bench --port COM5 --servo-disconnected
+.\.venv\Scripts\python.exe -m scripts.latch_command_bench --port COM5 --servo-disconnected --v5-unplugged
 ```
 
-`PING` debe ser `PONG FACENEXUS LATCH 1`. Las tramas `CHECK` esperan `CLOSED` o `ACTUATED`. `pulse_confirmed` no afirma la posición del pestillo. No ejecutar este comando con el firmware de banco (`BENCH 1`) ni con el servo engranado.
+Antes de grabar o ejecutar `LATCH 1`, los tres cables del SG90 (PWM, GND y **V5**) deben estar fuera. El último montaje comunicado alimentaba el servo por V5. `PING` debe ser `PONG FACENEXUS LATCH 1`. Las tramas `CHECK` esperan `CLOSED` o `ACTUATED`. `pulse_confirmed` no afirma la posición del pestillo. No ejecutar este comando con el firmware de banco (`BENCH 1`) ni con el servo conectado.

@@ -5,6 +5,7 @@ from hashlib import sha256
 import json
 from pathlib import Path
 import re
+import shutil
 from time import monotonic
 
 import cv2
@@ -15,12 +16,17 @@ from scripts.capture_manifest import child, utc_now, write_synced
 from scripts.dataset_capture import verify_vault
 from scripts.face_pipeline import load_detector
 from scripts.hog_knn import FEATURE_COUNT, PEOPLE, inspect_live_frame
+from scripts.phone_demo_manifest import (
+    LOT_PARTS, MANIFEST_PARTS, ROLE_SPLIT, append_registered_session, listed_run,
+    load_manifest, recover_unpublished_lot, require_explicit_encounter,
+    require_phone_manifest, reserve_lot_directory, session_record,
+)
 from scripts.phone_serial_bench import local_stream_url
 
 
 DEFAULT_COUNT = 20
 DEFAULT_INTERVAL = 1.2
-FOLDER = ("experiments", "hog_phone_adapt")
+FOLDER = LOT_PARTS
 WINDOW = "FaceNexus - captura celular"
 
 
@@ -110,8 +116,21 @@ def encode_png(frame):
     return payload.tobytes()
 
 
-def store_session(folder, person, frames, rotation, detector):
+def preview_hashes(frames, rotation):
+    """Huellas de la ráfaga antes de publicarla."""
+    rotate = ROTATE[rotation]
+    hashes = []
+    for frame in frames:
+        if rotate is not None:
+            frame = cv2.rotate(frame, rotate)
+        hashes.append(sha256(encode_png(frame)).hexdigest())
+    return hashes
+
+
+def store_session(folder, person, frames, rotation, detector, *, role="tune",
+                  encounter_id, run_name="session"):
     """Guarda PNG, ficha y vectores HOG usables. Conserva también los fallos de recorte."""
+    split = ROLE_SPLIT[role]
     rotate = ROTATE[rotation]
     records = []
     vectors = []
@@ -130,7 +149,7 @@ def store_session(folder, person, frames, rotation, detector):
         row.update({
             "sample_id": sample,
             "person_id": person,
-            "split": "TRAIN",
+            "split": split,
             "source": "phone_mjpeg",
             "rotation": rotation,
             "image_sha256": sha256(png).hexdigest(),
@@ -145,7 +164,9 @@ def store_session(folder, person, frames, rotation, detector):
     summary = {
         "at_utc": utc_now(),
         "person_id": person,
-        "split": "TRAIN",
+        "role": role,
+        "encounter_id": require_explicit_encounter(encounter_id, person, role, run_name),
+        "split": split,
         "source": "phone_mjpeg",
         "rotation": rotation,
         "sampled_frames": len(frames),
@@ -161,12 +182,58 @@ def store_session(folder, person, frames, rotation, detector):
     return summary
 
 
+def register_phone_session(vault, summary, run_name):
+    """Añade la ráfaga al manifiesto privado y avisa si falta una clase."""
+    hashes = [row["image_sha256"] for row in summary["records"]]
+    return append_registered_session(
+        child(vault, *MANIFEST_PARTS),
+        session_record(
+            summary["person_id"], run_name, summary["role"], summary["rotation"], hashes,
+            sampled=summary["sampled_frames"], usable=summary["usable_frames"],
+            encounter_id=summary.get("encounter_id"),
+            at=summary["at_utc"]))
+
+
+def commit_phone_session(vault, person, run_name, frames, rotation, detector, role="tune",
+                         encounter_id=None):
+    """Valida el manifiesto, publica en staging y registra de forma atómica."""
+    vault = Path(vault)
+    recover_unpublished_lot(vault, person, run_name)
+    hashes = preview_hashes(frames, rotation)
+    encounter_id = require_explicit_encounter(encounter_id, person, role, run_name)
+    trial = load_manifest(child(vault, *MANIFEST_PARTS))
+    trial.setdefault("sessions", [])
+    trial["sessions"] = list(trial["sessions"])
+    trial["sessions"].append(session_record(
+        person, run_name, role, rotation, hashes,
+        sampled=len(frames), usable=1, encounter_id=encounter_id))
+    require_phone_manifest(trial)
+    dest, staging = reserve_lot_directory(vault, person, run_name)
+    registered = False
+    try:
+        summary = store_session(staging, person, frames, rotation, detector,
+                                role=role, encounter_id=encounter_id, run_name=run_name)
+        warnings = register_phone_session(vault, summary, run_name)
+        registered = True
+        staging.rename(dest)
+    except Exception:
+        listed = listed_run(load_manifest(child(vault, *MANIFEST_PARTS)), person, run_name)
+        if staging.exists() and not (registered or listed):
+            shutil.rmtree(staging)
+        raise
+    return summary, warnings
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--vault", type=Path, required=True)
     parser.add_argument("--url", type=local_stream_url, required=True)
     parser.add_argument("--person", required=True, choices=PEOPLE)
-    parser.add_argument("--run-name", required=True, help="Nombre único, por ejemplo k01_phone_v1.")
+    parser.add_argument("--run-name", required=True, help="Nombre único, por ejemplo k01_phone_tune_v1.")
+    parser.add_argument("--encounter-id", required=True,
+                        help="Identificador del encuentro real. No usar el papel ni el run-name.")
+    parser.add_argument("--role", choices=tuple(ROLE_SPLIT), default="tune",
+                        help="tune = ajuste (TRAIN). eval = evaluación (VALIDATION). Encuentros distintos.")
     parser.add_argument("--rotation", type=int, choices=(0, 90, 180, 270), default=0)
     parser.add_argument("--count", type=int, default=DEFAULT_COUNT)
     parser.add_argument("--interval", type=float, default=DEFAULT_INTERVAL)
@@ -174,10 +241,7 @@ def main():
     args = parser.parse_args()
     if not re.fullmatch(r"[a-z0-9_]{3,40}", args.run_name) or args.count < 5 or args.interval < .3:
         parser.error("Nombre de ensayo, cantidad o intervalo inválidos.")
-    root = child(verify_vault(args.vault), *FOLDER, args.person, args.run_name)
-    if root.exists():
-        raise FileExistsError("Ese ensayo ya existe. Elige otro --run-name.")
-    root.mkdir(parents=True)
+    vault = verify_vault(args.vault)
     limit = args.count * args.interval + 8
     print("Captura de adaptación | mira la ventana FaceNexus en el PC.", flush=True)
     detector = load_detector(args.models)
@@ -187,7 +251,11 @@ def main():
             args.url, args.count, args.interval, limit, args.rotation)
         if status != "sampled":
             raise RuntimeError(f"La captura no completó los fotogramas ({status}, {len(frames)}).")
-        summary = store_session(root, args.person, frames, args.rotation, detector)
+        summary, warnings = commit_phone_session(
+            vault, args.person, args.run_name, frames, args.rotation, detector, args.role,
+            args.encounter_id)
+        for warning in warnings:
+            print(warning, flush=True)
         canvas = np.zeros((480, 854, 3), np.uint8)
         message = f"LISTO {summary['usable_frames']}/{summary['sampled_frames']}"
         print(f"Guardado {summary['usable_frames']}/{summary['sampled_frames']} recortes HOG usables "

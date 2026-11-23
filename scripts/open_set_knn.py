@@ -29,7 +29,7 @@ def open_set_row(gallery, labels, query, k=K):
     return winner, distance, runner - distance
 
 
-def score_rows(rows, max_distance, min_gap):
+def score_unknown_rows(rows, max_distance, min_gap):
     accepted = 0
     as_person = {person: 0 for person in PEOPLE}
     for winner, distance, gap in rows:
@@ -46,8 +46,29 @@ def score_rows(rows, max_distance, min_gap):
     }
 
 
+def score_known_rows(rows, max_distance, min_gap):
+    """Aciertos aceptados, confusiones aceptadas y rechazos. La etiqueta real cuenta."""
+    correct = confused = rejected = 0
+    for true, winner, distance, gap in rows:
+        if accepts_open_set(winner, distance, gap, max_distance, min_gap):
+            if winner == true:
+                correct += 1
+            else:
+                confused += 1
+        else:
+            rejected += 1
+    n = len(rows)
+    return {
+        "n": n,
+        "correct_accepted": correct,
+        "confused_accepted": confused,
+        "rejected": rejected,
+        "accepted": correct + confused,
+    }
+
+
 def genuine_loo_rows(gallery, labels, k=K):
-    """Cada vector de TRAIN se compara con el resto. No es VALIDATION."""
+    """Cada vector de TRAIN se compara con el resto. Conserva la etiqueta real."""
     rows = []
     labels = np.asarray(labels)
     for index in range(len(gallery)):
@@ -55,8 +76,21 @@ def genuine_loo_rows(gallery, labels, k=K):
         mask[index] = False
         if mask.sum() < k:
             continue
-        rows.append(open_set_row(gallery[mask], labels[mask], gallery[index], k))
+        winner, distance, gap = open_set_row(gallery[mask], labels[mask], gallery[index], k)
+        rows.append((str(labels[index]), winner, distance, gap))
     return rows
+
+
+def predict_open_set(gallery, labels, queries, max_distance, min_gap, k=K):
+    """Etiqueta UNKNOWN si falla T o la holgura."""
+    predicted = []
+    for query in queries:
+        winner, distance, gap = open_set_row(gallery, labels, query, k)
+        if accepts_open_set(winner, distance, gap, max_distance, min_gap):
+            predicted.append(winner)
+        else:
+            predicted.append("UNKNOWN")
+    return np.array(predicted)
 
 
 def unknown_rows(gallery, labels, unknown_x, k=K):
@@ -71,26 +105,24 @@ def _quantiles(values, count=24):
 
 
 def pick_operating_point(genuine_rows, unknown_rows_in, target_far=TARGET_FAR):
-    """FAR ≤ meta en extraños de calibración; entre esos, más aciertos LOO y T más chico."""
-    distances = [row[1] for row in genuine_rows + unknown_rows_in]
-    gaps = [row[2] for row in genuine_rows + unknown_rows_in]
+    """FAR ≤ meta; luego más aciertos de identidad, menos confusiones, T más chico."""
+    distances = [row[-2] for row in genuine_rows + unknown_rows_in]
+    gaps = [row[-1] for row in genuine_rows + unknown_rows_in]
     best = None
     for max_distance in _quantiles(distances):
         for min_gap in _quantiles(gaps):
-            unk = score_rows(unknown_rows_in, max_distance, min_gap)
+            unk = score_unknown_rows(unknown_rows_in, max_distance, min_gap)
             if unk["far"] is None or unk["far"] > target_far:
                 continue
-            gen = score_rows(genuine_rows, max_distance, min_gap)
-            rec = gen["accepted"] / gen["n"] if gen["n"] else 0.
-            key = (rec, -max_distance, min_gap)
+            gen = score_known_rows(genuine_rows, max_distance, min_gap)
+            key = (gen["correct_accepted"], -gen["confused_accepted"], -max_distance)
             if best is None or key > best["key"]:
                 best = {
                     "key": key,
                     "max_distance": float(max_distance),
                     "min_gap": float(min_gap),
                     "calibration_unknowns": unk,
-                    "loo_genuines": gen,
-                    "loo_recall": rec,
+                    "loo_known": gen,
                     "target_far": target_far,
                 }
     if best is None:
@@ -132,7 +164,7 @@ def main():
         "previous_unknowns": old,
         "gallery_sha256": bundle["gallery_sha256"],
         "unknown_source": "LFW TRAIN of K01/OTHER; calibration only, not TEST",
-        "loo_note": "Genuine recall is leave-one-out on TRAIN, not Downloads VALIDATION.",
+        "loo_note": "LOO TRAIN counts correct_accepted vs confused_accepted. Not Downloads VALIDATION.",
         **chosen,
     }
     write_synced(out, json.dumps(summary, indent=2, allow_nan=False).encode("utf-8"))
@@ -149,7 +181,8 @@ def main():
     print(json.dumps({
         "max_distance": chosen["max_distance"],
         "min_gap": chosen["min_gap"],
-        "loo_recall": chosen["loo_recall"],
+        "loo_correct": chosen["loo_known"]["correct_accepted"],
+        "loo_confused": chosen["loo_known"]["confused_accepted"],
         "calibration_far": chosen["calibration_unknowns"]["far"],
         "calibration_accepted": chosen["calibration_unknowns"]["accepted"],
         "previous_accepted": old["accepted"],

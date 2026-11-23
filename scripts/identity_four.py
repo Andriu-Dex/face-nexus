@@ -27,12 +27,12 @@ SLACK = 1.1
 RUN = "identity_four_v2"
 
 
-def load_sessions(path):
-    """Correspondencia ID → carpetas. El archivo vive fuera de Git."""
-    payload = json.loads(Path(path).read_text(encoding="utf-8-sig"))
+def sessions_from_record(payload):
+    """K01–K04 con carpetas de TRAIN y VALIDATION. No publicar los nombres."""
+    nested = payload.get("sessions", payload)
     sessions = {}
     for person in PEOPLE:
-        row = payload.get(person)
+        row = nested.get(person) if isinstance(nested, dict) else None
         if not isinstance(row, dict) or "train" not in row or "validation" not in row:
             raise ValueError("El mapa de sesiones debe cubrir K01–K04 con train y validation.")
         sessions[person] = {
@@ -40,6 +40,11 @@ def load_sessions(path):
             "validation": tuple(row["validation"]),
         }
     return sessions
+
+
+def load_sessions(path):
+    """Correspondencia ID → carpetas. El archivo vive fuera de Git."""
+    return sessions_from_record(json.loads(Path(path).read_text(encoding="utf-8-sig")))
 
 
 def list_pngs(folder):

@@ -1,7 +1,9 @@
 import numpy as np
 import pytest
 
-from scripts.identity_four import apply_threshold, four_max_distance, load_sessions, score_four
+from scripts.identity_four import (
+    apply_threshold, four_max_distance, load_sessions, score_four, sessions_from_record,
+)
 from scripts.import_frames import spread_indices
 
 
@@ -39,3 +41,12 @@ def test_session_map_requires_four_ids(tmp_path):
     path.write_text('{"K01": {"train": ["a"], "validation": ["b"]}}', encoding="utf-8")
     with pytest.raises(ValueError):
         load_sessions(path)
+    nested = sessions_from_record({
+        "sessions": {
+            "K01": {"train": ["a"], "validation": ["b"]},
+            "K02": {"train": ["c"], "validation": ["d"]},
+            "K03": {"train": ["e"], "validation": ["f"]},
+            "K04": {"train": ["g"], "validation": ["h"]},
+        }
+    })
+    assert nested["K01"]["validation"] == ("b",)

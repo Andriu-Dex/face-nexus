@@ -12,6 +12,8 @@ La única pauta vigente para las nuevas capturas está en [Adquisición del data
 
 Cada muestra tendrá `sample_id`, `person_id`, `session_id`, fuente, fecha de captura, condiciones, ruta privada, hash del archivo, partición y estado de calidad. No se publican rutas identificativas, imágenes, embeddings ni este manifiesto personalizado. En Git solo se conservan esquemas y ejemplos sintéticos.
 
+Los lotes del celular de demostración (K01–K04) se registran en un manifiesto privado `tune` (ajuste) / `eval` (evaluación): cada ráfaga lleva un `--encounter-id` del encuentro real, no un nombre derivado del papel. Fecha, orientación y SHA-256 van en el índice. Una ráfaga completa permanece en una sola partición. El software avisa si falta una identidad o si una imagen se duplica entre particiones. Un lote ya publicado no se borra aunque falte en un manifiesto nuevo. Los extraños se vinculan al NPZ por huella, `sample_id` y etiqueta OTHER. Los IDs de calibración salen del NPZ escrito al entrenar, con vectores, `sample_ids` e `identity_ids`, y su huella queda en el `summary.json` del ensayo junto a la galería. Un archivo de otro ensayo o sin vectores no verifica la disjunción. Comprobar el esquema con un manifiesto sintético antes de capturar.
+
 Toda sesión pertenece a una sola partición. También se agrupan duplicados y muestras derivadas de un mismo origen aunque tengan nombres o sesiones diferentes. Validar que las cuatro identidades aparecen en TRAIN, VALIDATION y TEST. La adquisición de una nueva ráfaga no acredita una sesión independiente por sí sola.
 
 ## Particiones

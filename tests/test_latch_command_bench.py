@@ -7,7 +7,9 @@ from scripts.latch_serial import LATCH_PONG
 def test_bench_requires_free_mechanism_and_latch_acks():
     with pytest.raises(ValueError, match="servo"):
         require_disconnected_servo(False)
-    require_disconnected_servo(True)
+    with pytest.raises(ValueError, match="V5"):
+        require_disconnected_servo(True, v5_unplugged=False)
+    require_disconnected_servo(True, v5_unplugged=True)
     cases = dict(latch_cases())
     assert cases["PING"] == LATCH_PONG
     assert cases["CHECK 1 K01 DENIED"] == "ACK 1 K01 DENIED CLOSED"

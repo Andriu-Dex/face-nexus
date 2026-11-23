@@ -135,12 +135,18 @@ def load_k01_gallery(root):
     return s01, phone_vectors[:-PHONE_HOLD], phone_vectors[-PHONE_HOLD:]
 
 
-def load_lfw_hog():
+def load_lfw_hog(*, with_train_identities=False):
     from sklearn.datasets import fetch_lfw_people
     lfw = fetch_lfw_people(color=True, min_faces_per_person=2, resize=.5, download_if_missing=True)
     vectors, identities = hog_collection(lfw.images, lfw.target)
     train_mask, val_mask = split_by_identity(identities)
-    return vectors[train_mask], vectors[val_mask], int(identities.max()) + 1, len(vectors)
+    n_people = int(identities.max()) + 1
+    train, val = vectors[train_mask], vectors[val_mask]
+    if not with_train_identities:
+        return train, val, n_people, len(vectors)
+    names = np.asarray(lfw.target_names, dtype=str)[identities[train_mask]]
+    samples = np.array([f"{name}_{index:04d}" for index, name in enumerate(names)])
+    return train, val, n_people, len(vectors), names, samples
 
 
 def main():

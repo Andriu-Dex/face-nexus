@@ -18,19 +18,24 @@ def latch_cases():
     )
 
 
-def require_disconnected_servo(confirmed):
+def require_disconnected_servo(confirmed, v5_unplugged=False):
+    """Los tres cables (PWM, GND y V5) deben estar fuera. El último montaje alimentaba por V5."""
     if confirmed is not True:
         raise ValueError("Confirmar --servo-disconnected. El SG90 no debe estar engranado.")
+    if v5_unplugged is not True:
+        raise ValueError("Confirmar --v5-unplugged. Desconectar PWM, GND y V5 antes del banco LATCH.")
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--port", required=True)
     parser.add_argument("--servo-disconnected", action="store_true",
-                        help="Obligatorio: mecanismo libre o servo desconectado.")
+                        help="Obligatorio: los tres cables del SG90 fuera del ESP32.")
+    parser.add_argument("--v5-unplugged", action="store_true",
+                        help="Obligatorio: V5 del servo desconectado. No grabar LATCH sin esto.")
     args = parser.parse_args()
     try:
-        require_disconnected_servo(args.servo_disconnected)
+        require_disconnected_servo(args.servo_disconnected, args.v5_unplugged)
         import serial
         with serial.Serial(args.port, 115200, timeout=.2, write_timeout=2) as connection:
             time.sleep(2)
