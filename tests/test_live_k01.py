@@ -7,7 +7,7 @@ import pytest
 from scripts.access import DENIED, GRANTED, default_permissions
 from scripts.compare_identity_k01 import knn_max_distance
 from scripts.hog_knn import FEATURE_COUNT
-from scripts.live_k01 import identify_knn, paint_regions, recognize_frame
+from scripts.live_k01 import identify_knn, paint_regions, parse_trial_ref, recognize_frame
 
 
 def _cnn():
@@ -86,3 +86,13 @@ def test_knn_max_distance_uses_validation_only():
     assert row["max_distance"] == pytest.approx(0.22)
     assert row["lfw_as_k01_before"] == 1
     assert row["lfw_as_k01_after"] == 0
+
+
+def test_parse_trial_ref_requires_known_family():
+    assert parse_trial_ref("identity_four_v2") == ("identity_four", "identity_four_v2")
+    assert parse_trial_ref("identity_four_other/identity_four_other_v1") == (
+        "identity_four_other", "identity_four_other_v1")
+    with pytest.raises(ValueError, match="ensayo"):
+        parse_trial_ref("../secret")
+    with pytest.raises(ValueError, match="ensayo"):
+        parse_trial_ref("identity_four/identity_four_v2/extra")

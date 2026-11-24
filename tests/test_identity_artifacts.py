@@ -3,7 +3,7 @@ import json
 import numpy as np
 import pytest
 from scripts.compare_identity_k01 import write_gallery
-from scripts.hog_knn import FEATURE_COUNT, PEOPLE
+from scripts.hog_knn import FEATURE_COUNT, PEOPLE, SFACE_FEATURE_COUNT
 from scripts.identity_artifacts import bind_threshold, file_digest, load_verified_knn
 from scripts.live_k01 import identify_knn
 
@@ -15,6 +15,19 @@ def _bundle(folder, digest_override=None, threshold=0.5):
     payload = {"max_distance": threshold, "gallery_sha256": digest_override or digest}
     (folder / "knn_max_distance.json").write_text(json.dumps(payload), encoding="utf-8")
     return digest
+
+
+def test_sface_gallery_requires_matching_preprocessing(tmp_path):
+    vectors = np.eye(len(PEOPLE), SFACE_FEATURE_COUNT, dtype=np.float32)
+    digest = write_gallery(tmp_path / "gallery.npz", vectors, np.array(PEOPLE))
+    path = tmp_path / "knn_max_distance.json"
+    record = {"max_distance": 0.5, "gallery_sha256": digest}
+    path.write_text(json.dumps(record), encoding="utf-8")
+    assert load_verified_knn(tmp_path)[0] is None
+    path.write_text(json.dumps({**record, "preprocessing": "sface"}), encoding="utf-8")
+    bundle, reason = load_verified_knn(tmp_path)
+    assert reason is None and bundle["preprocessing"] == "sface"
+    np.testing.assert_array_equal(bundle["vectors"], vectors)
 
 
 def test_verified_pair_and_failures(tmp_path):

@@ -16,6 +16,7 @@ from scripts.capture_manifest import child, utc_now, write_synced
 from scripts.dataset_capture import verify_vault
 from scripts.face_pipeline import load_detector
 from scripts.hog_knn import FEATURE_COUNT, PEOPLE, inspect_live_frame
+from scripts.import_frames import natural_key, spread_indices
 from scripts.phone_demo_manifest import (
     LOT_PARTS, MANIFEST_PARTS, ROLE_SPLIT, append_registered_session, listed_run,
     load_manifest, recover_unpublished_lot, require_explicit_encounter,
@@ -128,7 +129,7 @@ def preview_hashes(frames, rotation):
 
 
 def store_session(folder, person, frames, rotation, detector, *, role="tune",
-                  encounter_id, run_name="session"):
+                  encounter_id, run_name="session", source="phone_mjpeg", source_indices=None):
     """Guarda PNG, ficha y vectores HOG usables. Conserva también los fallos de recorte."""
     split = ROLE_SPLIT[role]
     rotate = ROTATE[rotation]
@@ -150,12 +151,14 @@ def store_session(folder, person, frames, rotation, detector, *, role="tune",
             "sample_id": sample,
             "person_id": person,
             "split": split,
-            "source": "phone_mjpeg",
+            "source": source,
             "rotation": rotation,
             "image_sha256": sha256(png).hexdigest(),
             "width": int(frame.shape[1]),
             "height": int(frame.shape[0]),
         })
+        if source_indices is not None:
+            row["source_frame_index"] = source_indices[index - 1]
         records.append(row)
         if info["reason"] == "usable":
             vectors.append(info["vector"].astype(np.float32))
@@ -167,7 +170,7 @@ def store_session(folder, person, frames, rotation, detector, *, role="tune",
         "role": role,
         "encounter_id": require_explicit_encounter(encounter_id, person, role, run_name),
         "split": split,
-        "source": "phone_mjpeg",
+        "source": source,
         "rotation": rotation,
         "sampled_frames": len(frames),
         "usable_frames": len(vectors),
@@ -195,7 +198,7 @@ def register_phone_session(vault, summary, run_name):
 
 
 def commit_phone_session(vault, person, run_name, frames, rotation, detector, role="tune",
-                         encounter_id=None):
+                         encounter_id=None, *, source="phone_mjpeg", source_indices=None):
     """Valida el manifiesto, publica en staging y registra de forma atómica."""
     vault = Path(vault)
     recover_unpublished_lot(vault, person, run_name)
@@ -212,7 +215,8 @@ def commit_phone_session(vault, person, run_name, frames, rotation, detector, ro
     registered = False
     try:
         summary = store_session(staging, person, frames, rotation, detector,
-                                role=role, encounter_id=encounter_id, run_name=run_name)
+                                role=role, encounter_id=encounter_id, run_name=run_name,
+                                source=source, source_indices=source_indices)
         warnings = register_phone_session(vault, summary, run_name)
         registered = True
         staging.rename(dest)
@@ -224,10 +228,28 @@ def commit_phone_session(vault, person, run_name, frames, rotation, detector, ro
     return summary, warnings
 
 
+def sample_phone_frames(directory, count):
+    """Selecciona posiciones equidistantes de los PNG de un solo video."""
+    paths = sorted(directory.glob("*.png"), key=natural_key)
+    if len(paths) < count:
+        raise ValueError(f"Se necesitan {count} PNG; hay {len(paths)}.")
+    indices = spread_indices(len(paths), count)
+    frames = []
+    for index in indices:
+        frame = cv2.imdecode(np.frombuffer(paths[index].read_bytes(), dtype=np.uint8),
+                             cv2.IMREAD_COLOR)
+        if frame is None:
+            raise ValueError(f"No se pudo leer el PNG en la posición {index}.")
+        frames.append(frame)
+    return frames, indices
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--vault", type=Path, required=True)
-    parser.add_argument("--url", type=local_stream_url, required=True)
+    source = parser.add_mutually_exclusive_group(required=True)
+    source.add_argument("--url", type=local_stream_url)
+    source.add_argument("--frames-dir", type=Path, help="Carpeta de PNG de un solo video del celular.")
     parser.add_argument("--person", required=True, choices=PEOPLE)
     parser.add_argument("--run-name", required=True, help="Nombre único, por ejemplo k01_phone_tune_v1.")
     parser.add_argument("--encounter-id", required=True,
@@ -243,8 +265,17 @@ def main():
         parser.error("Nombre de ensayo, cantidad o intervalo inválidos.")
     vault = verify_vault(args.vault)
     limit = args.count * args.interval + 8
-    print("Captura de adaptación | mira la ventana FaceNexus en el PC.", flush=True)
     detector = load_detector(args.models)
+    if args.frames_dir is not None:
+        frames, indices = sample_phone_frames(args.frames_dir, args.count)
+        summary, warnings = commit_phone_session(
+            vault, args.person, args.run_name, frames, args.rotation, detector, args.role,
+            args.encounter_id, source="phone_video_frames", source_indices=indices)
+        for warning in warnings:
+            print(warning)
+        print(f"{args.person}: {summary['usable_frames']}/{len(frames)} recortes HOG usables")
+        return
+    print("Captura de adaptación | mira la ventana FaceNexus en el PC.", flush=True)
     try:
         countdown()
         status, frames = collect_with_preview(

@@ -2,7 +2,7 @@
 #include <string.h>
 
 constexpr unsigned long BAUD_RATE = 115200;
-constexpr int SERVO_PIN = 18;
+constexpr int SERVO_PIN = 25;
 constexpr int SERVO_CHANNEL = 0;
 constexpr int CLOSED_DEG = 20;
 constexpr int OPEN_DEG = 90;
@@ -31,6 +31,28 @@ void pulseOpen() {
 void handleLine(char* input) {
     if (strcmp(input, "PING") == 0) {
         Serial.println("PONG FACENEXUS LATCH 1");
+        return;
+    }
+
+    if (strcmp(input, "SERVO RANGE") == 0) {
+        Serial.printf("SERVO RANGE %d %d\n", CLOSED_DEG, OPEN_DEG);
+        return;
+    }
+
+    if (strncmp(input, "SERVO MOVE ", 11) == 0) {
+        const char* angle = input + 11;
+        if (strlen(angle) == 0 || strlen(angle) > 3
+                || strspn(angle, "0123456789") != strlen(angle)) {
+            Serial.println("ERROR BAD_ANGLE");
+            return;
+        }
+        const int degrees = atoi(angle);
+        if (degrees < CLOSED_DEG || degrees > OPEN_DEG) {
+            Serial.println("ERROR BAD_ANGLE");
+            return;
+        }
+        writeAngle(degrees);
+        Serial.printf("SERVO ACK %d\n", degrees);
         return;
     }
 

@@ -12,6 +12,7 @@ from time import monotonic, sleep
 from scripts.operator_ui import (
     OperatorApp, decision_view, display_person, launch_preflight, load_camera_config,
     load_identity_labels, parse_camera_url, save_camera_config, technical_lines,
+    trial_banner,
 )
 
 
@@ -56,6 +57,9 @@ def test_decision_view_uses_text_and_color():
     assert denied["title"] == "Denegado" and denied["tone"] != granted["tone"]
     assert wait["title"] == "Espera"
     assert lost["title"] == "Señal perdida" and lost["identity"] == "—"
+    stale = decision_view("STALE", "stale_measurement", "K01", {"K01": "Alpha"})
+    assert stale["title"] == "Espera" and stale["identity"] == "—"
+    assert "medición reciente" in stale["detail"]
     unseen = decision_view("DENIED", "unknown_identity", "UNKNOWN", {}, face_seen=False)
     seen = decision_view("DENIED", "unknown_identity", "UNKNOWN", {}, face_seen=True)
     assert "Rostro detectado" in seen["detail"]
@@ -134,6 +138,41 @@ def _texts(widget):
     return [item for item in found if item]
 
 
+def test_manual_servo_reports_ack_without_changing_camera_decision(app, monkeypatch):
+    ports = []
+
+    def fake_pulse(port, action, degrees):
+        ports.append((port, action, degrees))
+        return "ACK 6 K01 GRANTED ACTUATED"
+
+    monkeypatch.setattr("scripts.operator_ui.send_servo_test", fake_pulse)
+    decision = app.decision_title.cget("text")
+    app._servo_test_worker("COM5")
+    app._drain_ui()
+    assert ports == [("COM5", "cycle", None)]
+    assert "ACTUATED" in app.hw_lbl.cget("text")
+    assert app.decision_title.cget("text") == decision
+
+
+def test_model_selection_clears_previous_result_and_shows_trial(tmp_path):
+    from scripts.operator_ui import MODEL_OPTIONS
+
+    original = MODEL_OPTIONS["HOG original"]
+    chosen = MODEL_OPTIONS["SFace (comparación)"]
+    core = fake_recognize()
+    app = OperatorApp(core, config_path=tmp_path / "cam.json", trial_info={"label": original},
+                      model_loader=lambda trial: (core, True, None, {"label": trial}))
+    try:
+        app._show_decision(_granted_scene())
+        app.model_selection.set("SFace (comparación)")
+        app._select_model()
+        assert app.trial_info["label"] == chosen
+        assert "SFace (comparación)" in app.model_banner.cget("text")
+        assert app.decision_title.cget("text") == "Espera"
+    finally:
+        app.window.destroy()
+
+
 def test_initial_layout_placeholder_and_simulation_badge(app):
     app.window.geometry("1366x768")
     app.window.update_idletasks()
@@ -143,7 +182,7 @@ def test_initial_layout_placeholder_and_simulation_badge(app):
     hint = app.viewer.find_withtag("hint")
     assert hint
     assert "Abre una imagen" in app.viewer.itemcget(hint[0], "text")
-    assert app.cam_btn.cget("text") == "Cámara"
+    assert app.cam_btn.cget("text") == "Conectar celular"
     assert app.rearm_btn.cget("state") == "disabled"
     assert "simulación" in app.hw_lbl.cget("text").lower()
     assert "K01 · Alpha" in labels
@@ -211,6 +250,20 @@ class ScriptedCapture:
 
 def _blank():
     return np.zeros((48, 64, 3), np.uint8)
+
+
+def test_camera_dialog_connects_to_phone_only(app, monkeypatch):
+    app.url = "http://192.168.1.20:8080/video"
+    opened = []
+    monkeypatch.setattr(app, "_start_camera", lambda: opened.append(app.url))
+    app._camera_dialog()
+    dialog = next(widget for widget in app.window.winfo_children()
+                  if isinstance(widget, tk.Toplevel))
+    assert "IP del celular" in _texts(dialog)
+    assert "Cámara integrada" not in _texts(dialog)
+    next(widget for widget in dialog.winfo_children()
+         if isinstance(widget, tk.Button)).invoke()
+    assert opened == ["http://192.168.1.20:8080/video"]
 
 
 def test_camera_fault_after_granted_clears_authorization(tmp_path):
@@ -461,6 +514,29 @@ def test_fresh_result_publishes_when_view_has_moved_ahead(tmp_path):
     app.window.destroy()
 
 
+def test_live_view_labels_each_face_independently(app):
+    frame = _blank()
+    scene = _granted_scene()
+    scene["regions"].append({
+        "box": [50, 10, 75, 45], "outcome": "DENIED", "identity": "UNKNOWN",
+        "reason": "unknown_identity", "nearest": "K02", "score_text": "d=0.600",
+    })
+    now = monotonic()
+    app._preview_slot.put({"kind": "frame", "seq": 1, "bgr": frame, "at": now})
+    app._result_slot.put(_result(1, app._cam_gen, frame, scene, now))
+    app._tick_view()
+    labels = [
+        app.viewer.itemcget(item, "text")
+        for item in app.viewer.find_withtag("face_label") if app.viewer.type(item) == "text"
+    ]
+    assert labels == ["K01 · Alpha", "Desconocido"]
+    assert "K01 · Alpha, Desconocido" in app.identity_lbl.cget("text")
+    assert app.decision_title.cget("text") == "Autorizado"
+    app.tech_var.set(True)
+    app._refresh_tech()
+    assert "d=0.600" in app.tech_lbl.cget("text")
+
+
 def test_overlay_expires_and_stop_discards_it(tmp_path):
     app = OperatorApp(
         fake_recognize("GRANTED", "authorized", "K01"), config_path=tmp_path / "cam.json")
@@ -479,6 +555,7 @@ def test_overlay_expires_and_stop_discards_it(tmp_path):
     app._overlay["until"] = monotonic() - 0.01
     app._tick_view()
     assert not app.viewer.find_withtag("box")
+    assert app.decision_title.cget("text") == "Autorizado"
     app._published_seq = 0
     app._result_slot.put(_result(2, 1, frame, _granted_scene(), monotonic()))
     app._preview_slot.put({"kind": "frame", "seq": 2, "bgr": frame, "at": monotonic()})
@@ -488,6 +565,60 @@ def test_overlay_expires_and_stop_discards_it(tmp_path):
     assert app._overlay is None
     assert not app.viewer.find_withtag("box")
     app.window.destroy()
+
+
+def test_authorized_expires_while_video_keeps_arriving(tmp_path):
+    app = OperatorApp(
+        fake_recognize("GRANTED", "authorized", "K01"), config_path=tmp_path / "cam.json")
+    app.window.withdraw()
+    app.window.update_idletasks()
+    frame = _blank()
+    now = monotonic()
+    app._cam_gen = 1
+    app._preview_slot.put({"kind": "frame", "seq": 1, "bgr": frame, "at": now})
+    app._result_slot.put(_result(1, 1, frame, _granted_scene(), now))
+    app._tick_view()
+    assert app.decision_title.cget("text") == "Autorizado"
+    app._overlay["until"] = monotonic() - 0.01
+    app._preview_slot.put({"kind": "frame", "seq": 2, "bgr": frame, "at": monotonic()})
+    app._tick_view()
+    assert app.decision_title.cget("text") == "Autorizado"
+    assert not app.viewer.find_withtag("box")
+    app._live_decision_at = monotonic() - 1.1
+    app._preview_slot.put({"kind": "frame", "seq": 3, "bgr": frame, "at": monotonic()})
+    app._tick_view()
+    assert app.decision_title.cget("text") == "Espera"
+    assert "medición reciente" in app.detail_lbl.cget("text")
+    app.window.destroy()
+
+
+def test_late_publish_does_not_extend_authorized_ttl(tmp_path):
+    app = OperatorApp(
+        fake_recognize("GRANTED", "authorized", "K01"), config_path=tmp_path / "cam.json")
+    app.window.withdraw()
+    app.window.update_idletasks()
+    frame = _blank()
+    captured = monotonic() - 0.95
+    app._cam_gen = 1
+    app._preview_slot.put({"kind": "frame", "seq": 1, "bgr": frame, "at": captured})
+    app._result_slot.put(_result(1, 1, frame, _granted_scene(), captured))
+    app._tick_view()
+    assert app.decision_title.cget("text") == "Autorizado"
+    assert app._live_decision_at == captured
+    app._expire_live_decision(captured + 1.01)
+    assert app.decision_title.cget("text") == "Espera"
+    app.window.destroy()
+
+
+def test_trial_banner_shows_hash_and_thresholds():
+    text = trial_banner({
+        "label": "identity_four_other/identity_four_other_v1",
+        "gallery_sha256": "abc123def4567890",
+        "max_distance": 0.53,
+        "min_gap": 0.057,
+    })
+    assert "identity_four_other/identity_four_other_v1" in text
+    assert "T=0.530" in text and "G=0.057" in text and "abc123def456" in text
 
 
 def test_stale_result_is_not_authorized(tmp_path):

@@ -15,15 +15,23 @@ import cv2
 from scripts.access import default_permissions, simulate_authorize
 from scripts.calibrate_hog import ROTATE
 from scripts.dataset_capture import verify_vault
-from scripts.face_pipeline import load_detector
+from scripts.face_pipeline import load_detector, load_models
 from scripts.hog_knn import PEOPLE
-from scripts.latch_serial import latch_ready, ping_firmware, send_decision
-from scripts.live_k01 import HUMAN_RUN, build_identify, load_keras, paint_regions, recognize_frame
+from scripts.latch_serial import (
+    SERVO_CLOSED, SERVO_OPEN, latch_ready, ping_firmware, send_decision, send_servo_test,
+)
+from scripts.live_k01 import HUMAN_RUN, build_identify, face_descriptor, load_keras, paint_regions, recognize_frame
 from scripts.phone_serial_bench import local_stream_url
 from scripts.presentation_gate import PresentationGate, scene_kind
 
 
 BG = "#EDF2F6"
+MODEL_OPTIONS = {
+    "HOG original": "identity_four/identity_four_v2",
+    "HOG ampliado": "identity_four_other/identity_four_phone_04_expanded",
+    "HOG alineado": "identity_four_other/identity_four_phone_04_aligned",
+    "SFace (comparación)": "identity_four_other/identity_four_phone_04_sface",
+}
 SURFACE = "#FFFFFF"
 INK = "#142B3D"
 VIEWER = "#122636"
@@ -39,6 +47,7 @@ HISTORY_LIMIT = 40
 CAMERA_MODEL = "identity_four_v2 · k-NN"
 BOX_TTL = 0.45
 RESULT_MAX_AGE = 1.0
+DECISION_TTL = 1.0
 
 SPANISH = {
     "K01": "K01",
@@ -57,7 +66,9 @@ SPANISH = {
     "exception": "fallo interno",
     "not_human": "no humano",
     "SIGNAL_LOST": "Señal perdida",
+    "STALE": "Espera",
     "REARM": "Siguiente presentación",
+    "stale_measurement": "sin medición reciente",
 }
 
 
@@ -119,6 +130,9 @@ def decision_view(outcome, reason, identity, labels, face_seen=False):
     detail = SPANISH.get(reason, reason or "sin presentación")
     if outcome == "SIGNAL_LOST":
         detail = "sin fotograma de cámara; la autorización anterior no sigue vigente"
+    elif outcome == "STALE":
+        detail = "sin medición reciente; la autorización anterior no sigue vigente"
+        who = "—"
     elif outcome == "DENIED" and reason == "unknown_identity" and face_seen:
         detail = "Rostro detectado · identidad no confirmada"
     return {
@@ -135,6 +149,11 @@ def technical_lines(scene, labels):
     if not scene:
         return "Sin medición."
     regions = scene.get("regions") or []
+    if len(regions) > 1:
+        return "\n\n".join(
+            f"Rostro {index}\n{technical_lines(row, labels)}"
+            for index, row in enumerate(regions, start=1)
+        )
     row = next((item for item in regions if item.get("nearest")), regions[0] if regions else scene)
     nearest = row.get("nearest")
     access = display_person(scene.get("identity"), labels) if scene.get("identity") else "—"
@@ -306,15 +325,22 @@ def overlay_boxes(scene):
     for row in scene.get("regions") or []:
         box = row.get("box")
         if box:
-            boxes.append({"box": list(box), "granted": row.get("outcome") == "GRANTED"})
+            boxes.append({
+                "box": list(box),
+                "granted": row.get("outcome") == "GRANTED",
+                "identity": row.get("identity") or "UNKNOWN",
+            })
     return boxes
 
 
 class OperatorApp:
     def __init__(self, recognize, *, model_ready=True, reason="", url="", rotation=0,
-                 port=None, labels=None, config_path=None, open_capture=None):
+                 port=None, labels=None, config_path=None, open_capture=None,
+                 trial_info=None, model_loader=None):
         self._core = recognize
         self.model_ready = model_ready
+        self.trial_info = trial_info or {}
+        self.model_loader = model_loader
         self.open_capture = open_capture or open_cv_capture
         self.config_path = Path(config_path) if config_path else camera_config_path()
         saved = load_camera_config(self.config_path)
@@ -364,6 +390,8 @@ class OperatorApp:
         self._overlay = None
         self._view_seq = None
         self._paint_key = None
+        self._live_decision = False
+        self._live_decision_at = None
         self._capture_thread = None
         self._infer_thread = None
         self.metrics = {"view_fps": 0.0, "infer_ms": 0.0, "frame_age_ms": 0.0}
@@ -398,11 +426,19 @@ class OperatorApp:
         bar.columnconfigure(0, weight=1)
         tk.Label(bar, text="FaceNexus", font=self._font(18, bold=True), fg=INK, bg=SURFACE
                  ).grid(row=0, column=0, sticky="w")
-        tk.Label(bar, text="Simulación", font=self._font(11), fg=ACCENT, bg=SURFACE
-                 ).grid(row=0, column=1, sticky="e")
+        sim_text = "Simulación"
+        if self.trial_info.get("label"):
+            sim_text = f"Simulación · {self.trial_info['label']}"
+        self.model_banner = tk.Label(bar, text=sim_text, font=self._font(11), fg=ACCENT, bg=SURFACE)
+        self.model_banner.grid(row=0, column=1, sticky="e")
 
-        body = tk.Frame(self.window, bg=BG)
-        body.grid(row=1, column=0, sticky="nsew", padx=16, pady=(0, 16))
+        tabs = ttk.Notebook(self.window)
+        tabs.grid(row=1, column=0, sticky="nsew", padx=16, pady=(0, 16))
+        body = tk.Frame(tabs, bg=BG)
+        tabs.add(body, text="Reconocimiento")
+        servo = tk.Frame(tabs, bg=BG)
+        tabs.add(servo, text="Servo")
+        self._build_servo_tab(servo)
         body.columnconfigure(0, weight=1)
         body.rowconfigure(0, weight=1)
 
@@ -419,7 +455,7 @@ class OperatorApp:
         controls = tk.Frame(stage, bg=BG, pady=10)
         controls.grid(row=1, column=0, sticky="ew")
         self.cam_btn = tk.Button(
-            controls, text="Cámara", command=self._camera_dialog, font=self._font(11, bold=True),
+            controls, text="Conectar celular", command=self._camera_dialog, font=self._font(11, bold=True),
             bg=ACCENT, fg=SURFACE, activebackground="#005955", activeforeground=SURFACE,
             relief="flat", padx=18, pady=8, cursor="hand2")
         self.cam_btn.pack(side=tk.LEFT)
@@ -491,11 +527,83 @@ class OperatorApp:
         self.hw_lbl = tk.Label(side, text="", font=self._font(8), fg=WAIT_INK, bg=SURFACE,
                                wraplength=280, justify="left", anchor="w")
         self.hw_lbl.pack(anchor="w", pady=(10, 0))
+        if self.model_loader is not None and not self.port:
+            names = {trial: name for name, trial in MODEL_OPTIONS.items()}
+            self.model_selection = tk.StringVar(value=names.get(self.trial_info.get("label"), ""))
+            ttk.Label(side, text="Modelo de reconocimiento").pack(anchor="w", pady=(8, 2))
+            selector = ttk.Combobox(side, textvariable=self.model_selection,
+                                    values=list(MODEL_OPTIONS), state="readonly")
+            selector.pack(fill="x")
+            selector.bind("<<ComboboxSelected>>", self._select_model)
         self.status = tk.Label(side, text="Listo", font=self._font(8), fg=WAIT_INK, bg=SURFACE,
                                wraplength=280, justify="left", anchor="w")
         self.status.pack(anchor="w", pady=(4, 0))
         self._refresh_hw()
         self._paint_viewer()
+
+    def _select_model(self, _event=None):
+        trial = MODEL_OPTIONS[self.model_selection.get()]
+        previous = self.trial_info.get("label")
+        if trial == previous:
+            return
+        self._stop_camera()
+        try:
+            core, ready, reason, info = self.model_loader(trial)
+            if not ready:
+                raise ValueError(reason or "Galería no verificada.")
+        except (OSError, RuntimeError, ValueError) as error:
+            previous_name = next((name for name, ref in MODEL_OPTIONS.items() if ref == previous), "")
+            self.model_selection.set(previous_name)
+            messagebox.showerror("Modelo", f"No se cargó el modelo seleccionado. {error}",
+                                 parent=self.window)
+            return
+        self._core, self.model_ready, self.trial_info = core, ready, info
+        self._last_bgr = None
+        self.hold_file = self._frame_stale = self._file_caption = False
+        self._show_decision({})
+        self.history.clear()
+        self.log.delete(0, tk.END)
+        self._hist_key = None
+        self.model_banner.config(text=f"Simulación · {self.model_selection.get()}")
+        self._refresh_hw()
+        self._set_status("Modelo cargado. Conecta el celular para empezar.")
+        self._paint_viewer(force=True)
+
+    def _build_servo_tab(self, page):
+        panel = tk.Frame(page, bg=SURFACE, padx=24, pady=20)
+        panel.pack(anchor="nw", fill="x", padx=16, pady=16)
+        tk.Label(panel, text="Banco del pestillo", font=self._font(18, bold=True),
+                 bg=SURFACE, fg=INK).pack(anchor="w")
+        ttk.Label(panel, text="Puerto del ESP32").pack(anchor="w", pady=(16, 4))
+        self.servo_port = tk.StringVar(value="COM5")
+        ttk.Entry(panel, textvariable=self.servo_port, width=12).pack(anchor="w")
+        actions = tk.Frame(panel, bg=SURFACE)
+        actions.pack(anchor="w", pady=(12, 0))
+        self.servo_buttons = []
+        for text, action, angle in (
+            ("Verificar ESP32", "check", None),
+            ("Ir a cierre (20°)", "move", SERVO_CLOSED),
+            ("Ir a apertura (90°)", "move", SERVO_OPEN),
+            ("Probar ciclo", "cycle", None),
+        ):
+            button = ttk.Button(actions, text=text,
+                                command=lambda a=action, d=angle: self._test_servo(a, d))
+            button.pack(side="left", padx=(0, 8))
+            self.servo_buttons.append(button)
+        manual = tk.Frame(panel, bg=SURFACE)
+        manual.pack(anchor="w", pady=12)
+        ttk.Label(manual, text="Ángulo (20° a 90°)").pack(side="left")
+        self.servo_angle = tk.StringVar(value="45")
+        ttk.Spinbox(manual, from_=SERVO_CLOSED, to=SERVO_OPEN, textvariable=self.servo_angle,
+                    width=6).pack(side="left", padx=8)
+        move = ttk.Button(manual, text="Mover", command=lambda: self._test_servo("move"))
+        move.pack(side="left")
+        self.servo_buttons.append(move)
+        self.servo_status = tk.StringVar(value="Selecciona una operación. Verifica el recorrido visualmente.")
+        ttk.Label(panel, textvariable=self.servo_status, wraplength=680).pack(anchor="w")
+        if self.port:
+            for button in self.servo_buttons:
+                button.state(["disabled"])
 
     def _set_status(self, text):
         self.status.config(text=text)
@@ -545,12 +653,20 @@ class OperatorApp:
         for item in layer["boxes"]:
             left, top, right, bottom = item["box"]
             color = ACCENT if item["granted"] else "#C45C6A"
+            x = origin_x + left * shown_w / src_w
+            y = origin_y + top * shown_h / src_h
             self.viewer.create_rectangle(
-                origin_x + left * shown_w / src_w,
-                origin_y + top * shown_h / src_h,
+                x, y,
                 origin_x + right * shown_w / src_w,
                 origin_y + bottom * shown_h / src_h,
                 outline=color, width=3, tags="box")
+            label = self.viewer.create_text(
+                x + 5, y + 4, anchor="nw",
+                text=display_person(item["identity"], self.labels),
+                fill=SURFACE, font=self._font(10, bold=True), tags="face_label")
+            self.viewer.tag_lower(
+                self.viewer.create_rectangle(*self.viewer.bbox(label), fill=VIEWER, outline="",
+                                             tags="face_label"), label)
 
     def _set_cam_state(self, state, text=""):
         self.cam_state = state
@@ -571,13 +687,21 @@ class OperatorApp:
         view = decision_view(scene.get("outcome"), scene.get("reason"), scene.get("identity"),
                              self.labels, face_seen=face_seen)
         self.decision_title.config(text=view["title"], fg=view["tone"])
-        self.identity_lbl.config(text=f"Identidad: {view['identity']}")
+        regions = scene.get("regions") or []
+        if len(regions) > 1:
+            identities = [
+                display_person(row.get("identity") or "UNKNOWN", self.labels)
+                for row in regions
+            ]
+            self.identity_lbl.config(text=f"Rostros ({len(regions)}): " + ", ".join(identities))
+        else:
+            self.identity_lbl.config(text=f"Identidad: {view['identity']}")
         self.detail_lbl.config(text=view["detail"])
         self._refresh_tech()
 
     def _refresh_tech(self):
         if self.tech_var.get():
-            self.tech_lbl.config(text=technical_lines(self._scene, self.labels))
+            self.tech_lbl.config(text=trial_banner(self.trial_info) + technical_lines(self._scene, self.labels))
         else:
             self.tech_lbl.config(text="")
 
@@ -699,6 +823,7 @@ class OperatorApp:
         self._preview_slot.clear()
         self._result_slot.clear()
         self._clear_overlay()
+        self._clear_live_decision_clock()
         self._published_seq = 0
         self.hint_lbl.config(text="")
         self._set_cam_state("connecting")
@@ -720,6 +845,7 @@ class OperatorApp:
         self._shown_seq = 0
         self._published_seq = 0
         self._clear_overlay()
+        self._clear_live_decision_clock()
         self._refresh_rearm()
         if invalidate:
             self._invalidate_live_decision()
@@ -745,26 +871,31 @@ class OperatorApp:
         self._paint_viewer()
 
     def _capture_loop(self, url, gen):
-        capture = self.open_capture(url)
+        rotation = self.rotation
+        try:
+            capture = self.open_capture(url)
+        except (cv2.error, OSError):
+            capture = None
         if gen != self._cam_gen:
             closer = getattr(capture, "release", None)
             if capture is not None and closer is not None:
                 closer()
             return
         if capture is None:
-            self._ui(self._on_open_failed)
+            self._ui(lambda: self._on_open_failed() if gen == self._cam_gen else None)
             return
         self.capture = capture
-        self._ui(lambda: self._set_cam_state("connecting"))
         try:
             while gen == self._cam_gen and not self._stop.is_set():
                 ok, frame = capture.read()
+                if gen != self._cam_gen:
+                    return
                 if not ok or frame is None:
                     self._preview_slot.put({"kind": "lost", "at": monotonic()})
-                    self._ui(self._signal_lost)
+                    self._ui(lambda: self._signal_lost() if gen == self._cam_gen else None)
                     return
-                if self.rotation is not None:
-                    frame = cv2.rotate(frame, self.rotation)
+                if rotation is not None:
+                    frame = cv2.rotate(frame, rotation)
                 self._seq += 1
                 self._preview_slot.put({
                     "kind": "frame", "seq": self._seq, "bgr": frame, "at": monotonic(),
@@ -811,6 +942,10 @@ class OperatorApp:
     def _clear_overlay(self):
         self._overlay = None
         self._paint_key = None
+
+    def _clear_live_decision_clock(self):
+        self._live_decision = False
+        self._live_decision_at = None
 
     def _open_image(self):
         path = filedialog.askopenfilename(filetypes=[("Imagen", "*.png;*.jpg;*.jpeg")])
@@ -867,6 +1002,7 @@ class OperatorApp:
         self._shown_seq = 0
         self._published_seq = 0
         self._clear_overlay()
+        self._clear_live_decision_clock()
         self._refresh_rearm()
         self._set_cam_state("lost")
         self._record({
@@ -923,7 +1059,7 @@ class OperatorApp:
         if not active or age > RESULT_MAX_AGE:
             return
         self.metrics["infer_ms"] = result["infer_ms"]
-        self._commit_scene(result["scene"], "camera")
+        self._commit_scene(result["scene"], "camera", captured_at=result["captured_at"])
         boxes = overlay_boxes(result["scene"])
         if boxes:
             self._overlay = {
@@ -944,6 +1080,24 @@ class OperatorApp:
         if layer["gen"] != self._cam_gen or now >= layer["until"] or self._stop.is_set():
             self._overlay = None
 
+    def _expire_live_decision(self, now):
+        """El video puede seguir; Autorizado caduca si no hay resultado fresco."""
+        if self.hold_file or not self._live_decision or self._live_decision_at is None:
+            return
+        if now - self._live_decision_at <= DECISION_TTL:
+            return
+        self._live_decision = False
+        self.gate.note_fault()
+        self._refresh_rearm()
+        scene = {
+            "outcome": "STALE",
+            "reason": "stale_measurement",
+            "identity": None,
+        }
+        self._show_decision(scene)
+        self._set_status("Espera · sin medición reciente; la autorización anterior no sigue vigente")
+        self._record(scene, "camera")
+
     def _tick_view(self):
         preview = self._preview_slot.peek()
         result = self._result_slot.peek()
@@ -951,6 +1105,7 @@ class OperatorApp:
         self._publish_result(result, now)
         had_overlay = self._overlay is not None
         self._expire_overlay(now)
+        self._expire_live_decision(now)
         if preview and preview.get("kind") == "frame" and (
                 self._live_requested or not self.hold_file):
             self.hold_file = False
@@ -981,13 +1136,18 @@ class OperatorApp:
     def recognize_frame(self, frame):
         return self._core(frame, self.permissions)
 
-    def _commit_scene(self, scene, source):
+    def _commit_scene(self, scene, source, captured_at=None):
         simulate_authorize({
             key: scene[key] for key in ("outcome", "reason", "identity")
         } | {"event_id": scene.get("event_id")})
         if may_send_physical(source, scene_kind(scene), self.gate):
             self._send_latch(scene)
         self._refresh_rearm()
+        if source == "camera":
+            self._live_decision = True
+            self._live_decision_at = captured_at if captured_at is not None else monotonic()
+        else:
+            self._clear_live_decision_clock()
         self._show_decision(scene)
         identity = display_person(scene["identity"], self.labels)
         extra = ""
@@ -1012,6 +1172,49 @@ class OperatorApp:
         self._commit_scene(scene, source)
         return scene
 
+    def _test_servo(self, action, degrees=None):
+        port = self.servo_port.get().strip().upper()
+        if not port:
+            self.servo_status.set("Indica el puerto del ESP32.")
+            return
+        if action == "move" and degrees is None:
+            try:
+                degrees = int(self.servo_angle.get())
+                if not SERVO_CLOSED <= degrees <= SERVO_OPEN:
+                    raise ValueError
+            except ValueError:
+                self.servo_status.set(f"Escribe un ángulo entero entre {SERVO_CLOSED}° y {SERVO_OPEN}°.")
+                return
+        if action != "check":
+            operation = f"mover el brazo a {degrees}°" if action == "move" else "hacer un ciclo"
+            if not messagebox.askokcancel(
+                    "Prueba manual", f"El servo va a {operation} en {port}. "
+                    "Deja libre el recorrido y retira las manos.", parent=self.window):
+                return
+        for button in self.servo_buttons:
+            button.state(["disabled"])
+        self.servo_status.set(f"Esperando respuesta del ESP32 en {port}…")
+        threading.Thread(target=self._servo_test_worker, args=(port, action, degrees),
+                         daemon=True).start()
+
+    def _servo_test_worker(self, port, action="cycle", degrees=None):
+        try:
+            ack = send_servo_test(port, action, degrees)
+        except (ImportError, OSError, RuntimeError, TimeoutError, ValueError) as error:
+            message = f"No se confirmó la operación en {port}. {error}"
+        else:
+            message = f"{port} · {ack}"
+            if action != "check":
+                message += " · Comprueba el recorrido del brazo."
+        self._ui(lambda: self._finish_servo_test(message))
+
+    def _finish_servo_test(self, message):
+        self.ack_text = message
+        self._refresh_hw()
+        self.servo_status.set(message)
+        for button in self.servo_buttons:
+            button.state(["!disabled"])
+
     def _send_latch(self, scene):
         if not self.latch_ok or self.connection is None or not self.model_ready:
             self.gate.note_fault()
@@ -1034,7 +1237,8 @@ class OperatorApp:
             mode = "firmware LATCH listo; el vivo no confirma el movimiento físico"
         else:
             mode = "simulación: no hay movimiento físico confirmado"
-        self.hw_lbl.config(text=f"Puerto {port} · {mode}\nAcuse: {self.ack_text}\n{self.lock_text}")
+        self.hw_lbl.config(
+            text=f"Puerto {port} · {mode}\nAcuse: {self.ack_text}\n{self.lock_text}")
 
     def _record(self, scene, source):
         key = history_key(scene, source)
@@ -1072,17 +1276,32 @@ class OperatorApp:
                 self.connection.close()
 
 
-def build_recognizer(vault, models):
+def trial_banner(info):
+    if not info or not info.get("label"):
+        return ""
+    digest = (info.get("gallery_sha256") or "")[:12] or "—"
+    distance = info.get("max_distance")
+    gap = info.get("min_gap")
+    t_text = f"{distance:.3f}" if isinstance(distance, (int, float)) else "—"
+    g_text = f"{gap:.3f}" if isinstance(gap, (int, float)) else "—"
+    return f"Ensayo {info['label']} · T={t_text} · G={g_text} · hash {digest}\n"
+
+
+def build_recognizer(vault, models, trial="identity_four_v2"):
     human = load_keras(Path(vault) / "experiments" / "human_cnn" / HUMAN_RUN / "model.keras")
-    identify, model_ready, reason = build_identify(vault, "knn", 0.)
-    detector = load_detector(models)
+    identify, model_ready, reason, info = build_identify(vault, "knn", 0., trial=trial)
+    if info.get("preprocessing") in ("aligned_hog", "sface"):
+        detector, aligner = load_models(models)
+    else:
+        detector, aligner = load_detector(models), None
+    describe = face_descriptor(info, aligner)
 
     def recognize(frame, permissions):
         return recognize_frame(
             frame, detector, human, identify, permissions, "knn",
-            model_ready=model_ready)
+            model_ready=model_ready, aligner=aligner, describe=describe)
 
-    return recognize, model_ready, reason
+    return recognize, model_ready, reason, info
 
 
 def main():
@@ -1092,14 +1311,23 @@ def main():
     parser.add_argument("--rotation", type=int, choices=(0, 90, 180, 270), default=0)
     parser.add_argument("--models", type=Path, default=Path("models/verified"))
     parser.add_argument("--port", default="")
+    parser.add_argument(
+        "--trial", default="identity_four/identity_four_v2",
+        help="identity_four/identity_four_v2 o identity_four_other/<run>. No pisa v2.")
     args = parser.parse_args()
     vault = verify_vault(args.vault)
     url = parse_camera_url(args.url) if args.url else ""
-    recognize, model_ready, reason = build_recognizer(vault, args.models)
+    try:
+        recognize, model_ready, reason, info = build_recognizer(vault, args.models, args.trial)
+    except ValueError as error:
+        parser.error(str(error))
+    if args.port and info.get("preprocessing") in ("aligned_hog", "sface"):
+        parser.error("Este candidato se prueba en simulación. Abre sin --port.")
     app = OperatorApp(
         recognize, model_ready=model_ready, reason=reason or "", url=url,
         rotation=args.rotation, port=args.port or None,
-        labels=load_identity_labels(vault))
+        labels=load_identity_labels(vault), trial_info=info,
+        model_loader=lambda trial: build_recognizer(vault, args.models, trial))
     app.run()
 
 

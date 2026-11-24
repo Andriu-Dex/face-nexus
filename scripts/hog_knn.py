@@ -9,6 +9,7 @@ from scripts.face_pipeline import crop_quality
 FACE_SIZE = (64, 64)
 HOG = cv2.HOGDescriptor(FACE_SIZE, (16, 16), (8, 8), (8, 8), 9)
 FEATURE_COUNT = HOG.getDescriptorSize()
+SFACE_FEATURE_COUNT = 128
 PEOPLE = ("K01", "K02", "K03", "K04")
 
 
@@ -19,6 +20,14 @@ def describe_face(crop):
     vector = HOG.compute(cv2.equalizeHist(grey)).reshape(-1)
     norm = float(np.linalg.norm(vector))
     return vector / norm if norm > 0 and np.isfinite(norm) else None
+
+
+def describe_sface(crop, extractor):
+    vector = extractor.feature(crop).reshape(-1)
+    norm = np.linalg.norm(vector)
+    if vector.size != SFACE_FEATURE_COUNT or not np.isfinite(norm) or norm <= 0:
+        return None
+    return vector / norm
 
 
 def _require_bgr_frame(frame):
@@ -67,6 +76,16 @@ def detect_boxes(frame, detector):
     """Localiza cajas en el fotograma original. Conserva el recorte 640 del detector."""
     return [(left, top, right, bottom, score)
             for left, top, right, bottom, score, _landmarks in detect_faces(frame, detector)]
+
+
+def align_detected_face(frame, detection, aligner):
+    """Normaliza la pose en el plano con los cinco puntos de YuNet."""
+    left, top, right, bottom, score, landmarks = detection
+    if landmarks is None or np.linalg.norm(landmarks[0] - landmarks[1]) < 2:
+        return None
+    row = np.array([left, top, right - left, bottom - top,
+                    *landmarks.ravel(), score or 0.], dtype=np.float32)
+    return aligner.alignCrop(frame, row)
 
 
 def face_features(frame, detector, *, require_single=False):

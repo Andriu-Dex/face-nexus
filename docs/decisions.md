@@ -196,3 +196,11 @@ Resultados, tiempos, pruebas y archivos en [07_face_pipeline_validation.md](repo
 - D-82: detener o reconectar invalida la autorización de cámara. Un archivo se etiqueta como predicción de archivo. La URL efectiva (ruta incluida) se conserva; un fallo al guardar no impide conectar. Captura, inferencia y vista usan el fotograma más reciente, sin cola. Tkinter no abre el stream. T y G no cambian. El pestillo sigue en simulación.
 
 - D-83: cada resultado fresco se publica una vez con edad máxima y sesión activa, aunque la vista haya avanzado. El recuadro es una capa de Canvas con vigencia breve; no alarga la autorización. Se borra si el análisis siguiente no ve rostro, caduca o cambia la sesión. El FPS cuenta fotogramas distintos.
+
+- D-84: si el video sigue y no hay resultado fresco, Autorizado caduca a 1 s; la caja sola no basta. Las capturas nuevas y la demo van sin lentes; las históricas con lentes se conservan. T y G no se retocan con esas tomas. El ensayo del lunes separa tune y eval. El servo se prueba sin carga y con fuente externa antes del pestillo; el reconocimiento permanece en simulación.
+
+- D-85: `FaceNexus.cmd` sigue en `identity_four/identity_four_v2`. Un candidato `--phone-tune` se carga solo con `--trial identity_four_other/<run>` tras verificar hash, T y G; no pisa v2. Autorizado caduca respecto a `captured_at` del resultado. Banco serie con SG90 desconectado, distinto del servo sin carga alimentado por fuente externa (V5 del ESP32 libre).
+
+- D-86. El 23-11-2026 se adoptó GPIO25 para la señal PWM del SG90. El ensayo inicial del firmware se realiza con los tres cables del servo desconectados. El ensayo del brazo libre usa una fuente externa con tierra común.
+
+- D-87. El responsable confirma el entrenamiento propio a escala de millones de imágenes externas (CONF-05). La transcripción del 19-11-2026, 14:40–15:52 y 19:09–19:54, fundamenta el entrenamiento propio y la integración de datos externos y de los participantes. El volumen de dos millones de imágenes únicas en TRAIN se adopta como objetivo operativo. [NIST suspendió la distribución de IJB-C](https://www.nist.gov/itl/tted/btg/ijb-c-dataset-request-form). DigiFace-1M es candidato para una parte del entrenamiento académico.

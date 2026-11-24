@@ -107,7 +107,8 @@ def _quantiles(values, count=24):
 def pick_operating_point(genuine_rows, unknown_rows_in, target_far=TARGET_FAR):
     """FAR ≤ meta; luego más aciertos de identidad, menos confusiones, T más chico."""
     distances = [row[-2] for row in genuine_rows + unknown_rows_in]
-    gaps = [row[-1] for row in genuine_rows + unknown_rows_in]
+    gaps = [max(0., row[-1]) for row in genuine_rows + unknown_rows_in
+            if row[-1] is not None and np.isfinite(row[-1])]
     best = None
     for max_distance in _quantiles(distances):
         for min_gap in _quantiles(gaps):

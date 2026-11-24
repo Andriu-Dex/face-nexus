@@ -69,4 +69,20 @@ Cuando se grabe `firmware/latch`, el primer ensayo físico usa órdenes de prueb
 .\.venv\Scripts\python.exe -m scripts.latch_command_bench --port COM5 --servo-disconnected --v5-unplugged
 ```
 
-Antes de grabar o ejecutar `LATCH 1`, los tres cables del SG90 (PWM, GND y **V5**) deben estar fuera. El último montaje comunicado alimentaba el servo por V5. `PING` debe ser `PONG FACENEXUS LATCH 1`. Las tramas `CHECK` esperan `CLOSED` o `ACTUATED`. `pulse_confirmed` no afirma la posición del pestillo. No ejecutar este comando con el firmware de banco (`BENCH 1`) ni con el servo conectado.
+Antes de grabar o ejecutar `LATCH 1`, los tres cables del SG90 (PWM, GND y **V5**) deben estar fuera. Ese banco serie no mueve nada.
+
+El ensayo posterior se hace sin carga, con el brazo libre. Con ambas alimentaciones apagadas, conectar el cable amarillo del SG90 a **GPIO25 (G25)**, el rojo al positivo de la fuente externa y el marrón al negativo de la fuente y al GND del ESP32. Dejar libre **V5 del ESP32**. TowerPro especifica 4,8 V nominales y alimentación mediante adaptador externo. [Ficha del SG90 analógico](https://towerpro.com.tw/product/sg90-analog/)
+
+Para el banco serie, el servo debe permanecer desconectado. `PING` debe devolver `PONG FACENEXUS LATCH 1` y las tramas `CHECK` deben devolver el acuse esperado. En el ensayo posterior, verificar visualmente el giro libre y el regreso del brazo. El acuse `ACTUATED` confirma que el firmware ejecutó la secuencia PWM. La posición del pestillo se comprueba por observación.
+
+El 23-11-2026 se compiló y cargó `firmware/latch` con PWM en GPIO25 mediante Arduino-ESP32 2.0.17 por COM5. La herramienta verificó las regiones escritas y reinició la placa. Con el SG90 desconectado, se verificaron las cinco tramas del banco: PING, dos denegaciones, una concesión inválida y una orden de accionamiento válida. El acuse ACTUATED se observó en serie. El movimiento físico queda para el ensayo con el brazo libre.
+
+### Primer movimiento observado del SG90
+
+El 23-11-2026, en COM5, el ESP32 ejecutó una sola orden de banco con el SG90 desacoplado de la maqueta, señal en GPIO25 y alimentación desde V5 por USB. El acuse fue `ACK 5 K01 GRANTED ACTUATED`. El operador confirmó que el brazo giró y regresó a su posición inicial. Queda pendiente comprobar el recorrido con el pestillo montado.
+
+Con el pestillo montado, el 23-11-2026 se envió una sola orden de banco. El ESP32 devolvió `ACK 6 K01 GRANTED ACTUATED` y el operador confirmó que el pestillo abrió y volvió a cerrar sin atascarse. El ensayo se hizo sin reconocimiento facial.
+
+Para repetir desde FaceNexus, iniciar la interfaz en simulación y abrir la pestaña **Servo**. Indicar el puerto del ESP32. **Verificar ESP32** consulta `PING`. **Probar ciclo** ejecuta la apertura y el regreso. **Ir a cierre**, **Ir a apertura** y **Mover** ordenan posiciones de 20° a 90°. Estas tres opciones requieren el firmware con `SERVO RANGE` y `SERVO MOVE`. El firmware valida el mismo rango. Mantener libre el recorrido y observar el brazo. El acuse indica el ángulo ordenado.
+
+Para comprobar la integración, ensayar primero en **Reconocimiento** con el modelo congelado. Incluir permiso activo e inactivo, cuadro vacío, una persona no inscrita y una escena mixta. Registrar el resultado por presentación. Para la prueba física posterior, registrar en la misma fila el resultado de reconocimiento, la orden, el acuse y el movimiento observado. La prueba manual del servo se registra por separado.

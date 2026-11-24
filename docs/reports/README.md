@@ -42,5 +42,6 @@ Estado al 22-11-2026. Los informes conservan las observaciones y decisiones de c
 | [36 · Rechazo visible](36_operator_rejection_path.md) | YuNet + T/G en pantalla; no se baja el umbral por una toma. |
 | [37 · Pipeline de vivo](37_live_pipeline_decouple.md) | Captura, inferencia y vista desacopladas; sin cola. |
 | [38 · Recuadro desacoplado](38_overlay_decouple.md) | Decisión y caja no exigen el mismo seq que la vista. |
+| [39 · Ensayo y defensa](39_monday_defense.md) | Caducidad de Autorizado, casos de simulación y tabla de informes. |
 
 La calibración en vivo reúne tres presentaciones usables de un voluntario y tres del primer integrante. El software ya puede sondear el giro del celular e inspeccionar intentos incompletos. Hay galería de cuatro IDs con fotos de Downloads (VALIDATION 31/39; K02 se confunde con K03). El vivo autoriza a cualquier integrante con permiso en pantalla, no el pestillo. Extraños LFW no se rechazan con el T actual. El 22-11-2026 el ESP32 volvió a aparecer en COM5 y respondió `PONG FACENEXUS BENCH 1`; el firmware `latch` no se grabó y el SG90 no se observó. El celular del lunes sigue siendo el dominio de la defensa.

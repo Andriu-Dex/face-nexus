@@ -31,12 +31,12 @@ def write_gallery(path, vectors, labels):
     return sha256(path.read_bytes()).hexdigest()
 
 
-def load_gallery(path):
+def load_gallery(path, feature_count=FEATURE_COUNT):
     with np.load(path, allow_pickle=False) as file:
         vectors = np.asarray(file["vectors"], np.float32)
         labels = np.asarray(file["labels"])
-    if vectors.ndim != 2 or vectors.shape[1] != FEATURE_COUNT or len(labels) != len(vectors):
-        raise ValueError("La galería HOG no coincide con el ensayo.")
+    if vectors.ndim != 2 or vectors.shape[1] != feature_count or len(labels) != len(vectors):
+        raise ValueError("La galería no coincide con el ensayo.")
     return vectors, labels
 
 

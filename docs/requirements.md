@@ -21,6 +21,7 @@ Las referencias de origen se encuentran en [source_analysis.md](source_analysis.
 | CONF-04 | Capturar con el celular, procesar en Windows y accionar el pestillo mediante el ESP-WROOM-32 y el SG90 | Un ensayo muestra imagen del celular, decisión de FaceNexus y apertura física cuando se autoriza |
 | CONF-02 | Priorizar código sencillo de entender, explicar y defender sobre patrones y convenciones que compliquen la solución | Revisión del flujo y explicación de cada operación; conservar corrección experimental y denegación ante fallos |
 | CONF-01 | Integrar obligatoriamente un dispositivo físico de acceso en la entrega final | Apertura real autorizada y denegación verificadas con el hardware |
+| CONF-05 | Entrenar en el proyecto una CNN de reconocimiento facial con millones de imágenes de conjuntos externos | Manifiesto de imágenes externas únicas utilizadas en TRAIN, registros de ejecución, pesos resultantes y evaluación independiente |
 | CLASE-01 | Organizar y explicar las etapas de adquisición a postprocesamiento | Correspondencia entre módulos y memoria técnica |
 | CLASE-02 | Distinguir entrenamiento, validación y prueba; estudiar generalización | Particiones y resultados separados |
 | PROY-01 | Identificar cuatro participantes mediante cámara en tiempo real | Ensayos en sesiones nuevas para cada identidad |

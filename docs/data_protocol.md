@@ -229,3 +229,31 @@ Usar con los voluntarios la misma cámara y pauta nominal, con consentimiento in
 ### Protección del almacenamiento definitivo
 
 Usar una carpeta NTFS restringida dentro de un contenedor VeraCrypt local. El custodio controla el montaje y conserva las credenciales de recuperación fuera del contenedor, de Git y del chat. El volumen protege en reposo originales, recortes, embeddings, manifiestos, consentimientos y sus respaldos autorizados. Mientras está montado, se aplican permisos de la cuenta del custodio, SYSTEM y Administradores. Mantener archivos temporales y derivados dentro del volumen. Desmontar tras el uso y conservar el plazo de eliminación acordado. La [guía de preparación y verificación](vault_and_camera_setup.md) describe la instalación, el ensayo sin personas y la copia verificable. La captura real requiere autorización expresa posterior.
+
+Para los PNG ya extraídos de un único video del celular, usar `scripts.capture_phone_train --frames-dir <carpeta-de-PNG>` en lugar de `--url`. El importador selecciona índices espaciados en orden natural, registra el origen y guarda la auditoría y los vectores en el volumen privado. Cada video permanece íntegramente en el papel asignado al encuentro.
+
+## Galería ampliada del celular
+
+El ensayo privado identity_four_other/identity_four_phone_04_expanded seleccionó 70 fotogramas por persona de los videos 04 y conservó 255 vectores utilizables distintos (68/62/63/62). Calibró T y G con exclusión de un vector por turno en la propia galería y LFW TRAIN como desconocidos. LFW VALIDATION, separado por identidad, dio 10 aceptaciones indebidas de 2627. En el lote 05 exploratorio fueron 40 aciertos, 35 rechazos y 0 confusiones. La interfaz puede cargarlo de forma explícita en simulación. La elección es exploratoria y la prueba presencial con modelo congelado sigue pendiente, particularmente para K01.
+
+## Alineación del rostro para el celular
+
+El ensayo identity_four_other/identity_four_phone_04_aligned usa los cinco puntos de YuNet para alinear cada rostro antes del HOG. Se compararon las mismas caras detectadas en ambos métodos. La calibración usó 255 recortes 04 con exclusión de un vector por vez y 1500 recortes LFW de calibración. Sobre 75 recortes 05 exploratorios, HOG de caja acertó 43 y HOG alineado 53, ambos sin confusiones. En 999 recortes de desconocidos LFW de identidades separadas, hubo 10 y 8 aceptaciones indebidas respectivamente. Los umbrales del candidato están ligados a su galería. Solo se carga explícitamente y en simulación.
+
+## Comparación SFace en simulación
+
+Con los mismos fotogramas y la misma partición LFW por identidad, HOG alineado acertó 53 de 75 recortes utilizables del lote 05 y SFace acertó 75 de 75. Ninguno confundió a un integrante con otro en ese lote. En los 999 recortes LFW de validación, HOG alineado aceptó 8 desconocidos y SFace aceptó 11. El criterio SFace queda como candidato de simulación para verificar los giros y errores del ensayo en vivo. El lote 05 es exploratorio y no intervino en la calibración.
+
+### Ensayo en vivo con SFace del 24-11-2026
+
+En el celular y en simulación, el candidato `identity_four_phone_04_sface` autorizó correctamente 12 de 14 presentaciones individuales de inscritos, incluidas dos repeticiones. Las dos denegaciones fueron por ausencia de detección. En la presentación con permiso inactivo, el sistema conservó la identidad y denegó el acceso en los cinco fotogramas. La pareja de inscritos se reconoció en los cinco.
+
+Un mismo voluntario no inscrito fue aceptado como K02 en la primera presentación individual (5/5 fotogramas) y rechazado en la repetición (5/5). En la escena mixta se reconoció al inscrito en 5/5 y se asignó K02 al desconocido en 3/5. El margen de las tres falsas identificaciones en la escena mixta superó el umbral global, al igual que la distancia cumplió su límite. La escena quedó autorizada por la presencia del inscrito. Los resultados se guardaron en el volumen privado sin conservar las imágenes del ensayo. Este candidato sigue en simulación. El voluntario observado puede aportar diagnóstico, pero una calibración revisada requiere una evaluación con desconocidos distintos.
+
+El ajuste exploratorio local del 24-11-2026 generó un candidato separado `identity_four_phone_04_sface_local_t100` con la misma galería SFace, T=1,000 y el margen anterior G≈0,105. La revisión conservó los 75 aciertos de los recortes 05 y rechazó los 25 fotogramas de las cinco tomas completas A01–A03. El límite anterior también rechazaba esos 25 fotogramas. En las falsas aceptaciones de la escena mixta con puntuaciones registradas, las distancias superaban el nuevo límite. La primera falsa aceptación individual carece de puntuaciones exactas y no admite comparación retrospectiva. La toma interrumpida se excluyó. Evaluar la variante en simulación con un grupo B distinto y con presentaciones nuevas de inscritos.
+
+La comparación del límite local con LFW usó las mismas 1000 imágenes de validación por identidad de la comparación anterior. Hubo 999 recortes utilizables. Con la misma galería y el mismo margen, T≈1,184 aceptó 11 de 999 desconocidos y T=1,000 aceptó 0 de 999. El umbral nuevo se fijó antes de esta comparación. El resultado por recorte se guardó en el volumen privado. La evaluación presencial del grupo B sigue pendiente.
+
+Con T=1,000 y G≈0,105 congelados, B01, una persona distinta de A01–A03 y de los inscritos, fue rechazado en las dos presentaciones individuales (5/5 fotogramas en cada una). En una presentación mixta, FaceNexus detectó dos rostros, identificó a K01 y mantuvo a B01 como UNKNOWN en los cinco fotogramas. La escena se autorizó por el permiso de K01. El ensayo se realizó mediante IP Webcam en simulación y se registró en el volumen privado sin conservar imágenes. La evidencia presencial del grupo B cubre por ahora una identidad.
+
+Se amplió la comprobación del candidato congelado T=1,000 con 285 imágenes LFW de 118 identidades de validación ausentes de la primera muestra pública. Se detectó y procesó un rostro en las 285 imágenes y se rechazaron las 285. Son identidades distintas para las comparaciones locales. No se ha comprobado que sean inéditas para el preentrenamiento del extractor SFace. El informe queda en el volumen privado.

@@ -3,6 +3,7 @@
 import argparse
 import json
 import os
+import re
 from pathlib import Path
 
 import cv2
@@ -12,11 +13,13 @@ from scripts.access import decide, decide_scene, default_permissions, simulate_a
 from scripts.calibrate_hog import ROTATE
 from scripts.capture_phone_train import WINDOW, show
 from scripts.compare_identity_k01 import vote_knn
-from scripts.hog_knn import PEOPLE, accepts_open_set, describe_face, detect_boxes, runner_up_distance
+from scripts.hog_knn import (
+    PEOPLE, accepts_open_set, align_detected_face, describe_face, describe_sface, detect_faces, runner_up_distance,
+)
 from scripts.identity_artifacts import load_verified_knn
 from scripts.dataset_capture import verify_vault
 from scripts.evaluate_hog_knn import K
-from scripts.face_pipeline import load_detector
+from scripts.face_pipeline import load_detector, load_models
 from scripts.human_cnn import HUMAN, resize_rgb
 from scripts.identity_k01 import accept_k01, binary_vote
 from scripts.phone_serial_bench import local_stream_url
@@ -25,6 +28,8 @@ from scripts.phone_serial_bench import local_stream_url
 FOUR_RUN = "identity_four_v2"
 SVM_RUN = "identity_k01_v1"
 HUMAN_RUN = "human_cnn_phone_v1"
+TRIAL_FAMILIES = ("identity_four", "identity_four_other")
+TRIAL_NAME = re.compile(r"^[a-z0-9_]{3,40}$")
 
 
 def cnn_mark(human_model, bgr):
@@ -74,12 +79,12 @@ def identify_svm(model, threshold):
 
 
 def recognize_crop(crop, human_model, identify, permissions, *,
-                   trust_detector=True, backend="knn", model_ready=True):
+                   trust_detector=True, backend="knn", model_ready=True, describe=None):
     """Si YuNet ya recortó un rostro, no se deja que LFW/CIFAR anule esa detección."""
     if model_ready is not True or identify is None:
         return decide(face_count=1, candidate=None, accepted=False, permission_active=False,
                       model_ready=False)
-    vector = describe_face(crop)
+    vector = (describe or describe_face)(crop)
     if vector is None:
         return decide(face_count=1, candidate=None, accepted=False, permission_active=False)
     cnn_human, _mark = cnn_mark(human_model, crop)
@@ -100,10 +105,17 @@ def recognize_crop(crop, human_model, identify, permissions, *,
     return row
 
 
+def face_descriptor(info, aligner):
+    """Elige la misma representación utilizada para construir la galería."""
+    if info.get("preprocessing") == "sface":
+        return lambda crop: describe_sface(crop, aligner)
+    return describe_face
+
+
 def recognize_frame(frame, detector, human_model, identify, permissions, backend,
-                    model_ready=True):
+                    model_ready=True, aligner=None, describe=None):
     """Una decisión por caja YuNet. La escena abre si al menos una región está autorizada."""
-    boxes = detect_boxes(frame, detector)
+    boxes = detect_faces(frame, detector)
     if not boxes:
         row = decide(face_count=0, candidate=None, accepted=False, permission_active=False,
                      model_ready=model_ready)
@@ -115,10 +127,17 @@ def recognize_frame(frame, detector, human_model, identify, permissions, backend
         row["regions"] = []
         return row
     regions = []
-    for left, top, right, bottom, _score in boxes:
-        row = recognize_crop(frame[top:bottom, left:right], human_model, identify,
-                             permissions, trust_detector=True, backend=backend,
-                             model_ready=model_ready)
+    for detection in boxes:
+        left, top, right, bottom, *_ = detection
+        crop = (align_detected_face(frame, detection, aligner) if aligner is not None
+                else frame[top:bottom, left:right])
+        if crop is None:
+            row = decide(face_count=1, candidate=None, accepted=False, permission_active=False,
+                         model_ready=model_ready)
+        else:
+            row = recognize_crop(crop, human_model, identify, permissions,
+                                 trust_detector=True, backend=backend, model_ready=model_ready,
+                                 describe=describe)
         row["box"] = [left, top, right, bottom]
         regions.append(row)
     scene = decide_scene([{key: row[key] for key in ("outcome", "reason", "identity")}
@@ -190,21 +209,60 @@ def four_folder(root):
     return Path(root) / "experiments" / "identity_four" / FOUR_RUN
 
 
-def build_identify(root, backend, margin, max_distance=None):
+def parse_trial_ref(trial):
+    """Familia/nombre. Sin barra se usa identity_four. No pisa otra carpeta."""
+    text = (trial or FOUR_RUN).strip().replace("\\", "/")
+    if "/" in text:
+        family, name = text.split("/", 1)
+    else:
+        family, name = "identity_four", text
+    if family not in TRIAL_FAMILIES or not TRIAL_NAME.fullmatch(name):
+        raise ValueError(
+            "Indica el ensayo como identity_four/identity_four_v2 o "
+            "identity_four_other/nombre_del_candidato.")
+    return family, name
+
+
+def resolve_knn_trial(vault, trial=FOUR_RUN):
+    """Carga galería y T/G verificados. No escribe ni sustituye otro ensayo."""
+    family, name = parse_trial_ref(trial)
+    folder = Path(vault) / "experiments" / family / name
+    bundle, reason = load_verified_knn(folder)
+    if bundle is None:
+        return folder, None, {
+            "family": family,
+            "name": name,
+            "label": f"{family}/{name}",
+            "reason": reason or "model_unavailable",
+        }
+    info = {
+        "family": family,
+        "name": name,
+        "label": f"{family}/{name}",
+        "gallery_sha256": bundle["gallery_sha256"],
+        "max_distance": float(bundle["max_distance"]),
+        "min_gap": float(bundle.get("min_gap") or 0.),
+        "preprocessing": bundle["preprocessing"],
+        "reason": None,
+    }
+    return folder, bundle, info
+
+
+def build_identify(root, backend, margin, max_distance=None, trial=FOUR_RUN):
     """k-NN exige galería y T del mismo ensayo. SVM queda como diagnóstico sin pestillo."""
     if backend == "knn":
-        bundle, reason = load_verified_knn(four_folder(root))
+        folder, bundle, info = resolve_knn_trial(root, trial)
         if bundle is None:
-            return None, False, reason
+            return None, False, info["reason"], info
         if max_distance is not None:
             bundle = dict(bundle)
             bundle["max_distance"] = max_distance
         identify = identify_knn(
             bundle["vectors"], bundle["labels"], bundle["max_distance"],
             bundle.get("min_gap", 0.))
-        return identify, True, None
+        return identify, True, None, info
     model = load_keras(root / "experiments" / "identity_k01" / SVM_RUN / "model.keras")
-    return identify_svm(model, margin), True, None
+    return identify_svm(model, margin), True, None, {"label": "svm/identity_k01_v1"}
 
 
 def main():
@@ -218,18 +276,36 @@ def main():
     parser.add_argument("--margin", type=float, default=0.)
     parser.add_argument("--max-distance", type=float, default=None,
                         help="Si se omite, se lee knn_max_distance.json o no hay T.")
+    parser.add_argument(
+        "--trial", default=FOUR_RUN,
+        help="identity_four/identity_four_v2 o identity_four_other/<run>. No escribe galería.")
     args = parser.parse_args()
     root = verify_vault(args.vault)
     human_model = load_keras(root / "experiments" / "human_cnn" / HUMAN_RUN / "model.keras")
-    identify, model_ready, reason = build_identify(root, args.backend, args.margin, args.max_distance)
+    try:
+        identify, model_ready, reason, info = build_identify(
+            root, args.backend, args.margin, args.max_distance, trial=args.trial)
+    except ValueError as error:
+        parser.error(str(error))
     if args.backend == "knn" and not model_ready:
         print(f"Galería o umbral no verificados ({reason}). Todo DENIED.", flush=True)
-    detector = load_detector(args.models)
+    else:
+        print(
+            f"Ensayo {info.get('label')} hash={(info.get('gallery_sha256') or '')[:12]} "
+            f"T={info.get('max_distance')} G={info.get('min_gap')}",
+            flush=True,
+        )
+    if info.get("preprocessing") in ("aligned_hog", "sface"):
+        detector, aligner = load_models(args.models)
+    else:
+        detector, aligner = load_detector(args.models), None
     permissions = default_permissions()
+    describe = face_descriptor(info, aligner)
 
     def recognize(frame):
         return recognize_frame(frame, detector, human_model, identify, permissions, args.backend,
-                               model_ready=model_ready)
+                               model_ready=model_ready, aligner=aligner,
+                               describe=describe)
 
     print(
         f"Ventana FaceNexus ({args.backend}). Escape cierra. "

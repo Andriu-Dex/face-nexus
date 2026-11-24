@@ -1,6 +1,6 @@
 import pytest
 
-from scripts.latch_serial import LATCH_PONG, format_check, latch_ready, read_ack, send_decision
+from scripts.latch_serial import LATCH_PONG, format_check, latch_ready, read_ack, send_decision, send_servo_test
 
 
 class _Lines:
@@ -38,3 +38,24 @@ def test_send_reports_pulse_not_position():
     result = send_decision(connection, 9, "K02", "GRANTED")
     assert result["pulse_confirmed"] is True
     assert "physical_open" not in result
+
+
+def test_manual_angle_checks_firmware_range_and_sends_one_move(monkeypatch):
+    class Port(_Lines):
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return None
+
+        def reset_input_buffer(self):
+            pass
+
+    port = Port([LATCH_PONG, "SERVO RANGE 20 90", "SERVO ACK 45"])
+    monkeypatch.setattr("serial.Serial", lambda **_kwargs: port)
+    monkeypatch.setattr("scripts.latch_serial.sleep", lambda _seconds: None)
+    with pytest.raises(ValueError, match="ángulo"):
+        send_servo_test("COM5", "move", 91)
+    assert not port.written
+    assert send_servo_test("COM5", "move", 45) == "SERVO ACK 45"
+    assert port.written == [b"PING\n", b"SERVO RANGE\n", b"SERVO MOVE 45\n"]

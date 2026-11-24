@@ -10,7 +10,7 @@ import numpy as np
 
 from scripts.compare_identity_k01 import GALLERY_NAME, load_gallery
 from scripts.evaluate_hog_knn import K
-from scripts.hog_knn import FEATURE_COUNT, PEOPLE
+from scripts.hog_knn import FEATURE_COUNT, PEOPLE, SFACE_FEATURE_COUNT
 
 DISTANCE_NAME = "knn_max_distance.json"
 HEX64 = re.compile(r"^[0-9a-f]{64}$")
@@ -39,7 +39,10 @@ def read_threshold_record(path):
     gap = float(gap)
     if not np.isfinite(gap) or gap < 0:
         raise ValueError("Holgura entre identidades inválida.")
-    return value, digest.lower(), gap
+    preprocessing = payload.get("preprocessing", "box_hog")
+    if preprocessing not in ("box_hog", "aligned_hog", "sface"):
+        raise ValueError("Preprocesamiento de galería desconocido.")
+    return value, digest.lower(), gap, preprocessing
 
 
 def bind_threshold(folder):
@@ -64,9 +67,9 @@ def bind_threshold(folder):
     return digest
 
 
-def _gallery_usable(vectors, labels):
+def _gallery_usable(vectors, labels, feature_count):
     names = set(map(str, labels))
-    if (vectors.ndim != 2 or vectors.shape[1] != FEATURE_COUNT or len(vectors) < K
+    if (vectors.ndim != 2 or vectors.shape[1] != feature_count or len(vectors) < K
             or not np.isfinite(vectors).all() or labels.ndim != 1
             or labels.shape != (len(vectors),) or type(K) is not int or K < 1
             or names != set(PEOPLE)):
@@ -82,14 +85,15 @@ def load_verified_knn(folder):
     if not gallery_path.is_file() or not distance_path.is_file():
         return None, "model_unavailable"
     try:
-        threshold, expected, min_gap = read_threshold_record(distance_path)
+        threshold, expected, min_gap, preprocessing = read_threshold_record(distance_path)
         digest = file_digest(gallery_path)
         if digest != expected:
             return None, "model_unavailable"
-        vectors, labels = load_gallery(gallery_path)
+        feature_count = SFACE_FEATURE_COUNT if preprocessing == "sface" else FEATURE_COUNT
+        vectors, labels = load_gallery(gallery_path, feature_count)
     except (OSError, ValueError, KeyError, TypeError, json.JSONDecodeError, zipfile.BadZipFile):
         return None, "model_unavailable"
-    if not _gallery_usable(vectors, labels):
+    if not _gallery_usable(vectors, labels, feature_count):
         return None, "model_unavailable"
     return {"vectors": vectors, "labels": labels, "max_distance": threshold,
-            "min_gap": min_gap, "gallery_sha256": digest}, None
+            "min_gap": min_gap, "gallery_sha256": digest, "preprocessing": preprocessing}, None
