@@ -9,11 +9,35 @@ LATCH_PONG = "PONG FACENEXUS LATCH 1"
 BENCH_PONG = "PONG FACENEXUS BENCH 1"
 
 
+def read_line(connection):
+    """Una línea del ESP32 sin el ruido 0xFF que a veces deja la apertura del puerto."""
+    raw = connection.readline().lstrip(bytes((0xFF, 0x00)))
+    return raw.decode("ascii", errors="replace").strip()
+
+
+def open_latch_port(port):
+    """Abre sin activar DTR/RTS, igual que el banco de pruebas, para no alterar al ESP32."""
+    import serial
+
+    connection = serial.Serial(baudrate=115200, timeout=.2, write_timeout=2)
+    connection.port = port
+    connection.dtr = False
+    connection.rts = False
+    connection.open()
+    # La primera escritura tras abrir puede ir precedida de ruido 0xFF; una línea vacía
+    # lo absorbe y luego se descarta todo lo recibido antes del PING real.
+    sleep(2)
+    connection.write(b"\n")
+    sleep(.3)
+    connection.reset_input_buffer()
+    return connection
+
+
 def ping_firmware(connection, timeout=2):
     connection.write(b"PING\n")
     deadline = monotonic() + timeout
     while monotonic() < deadline:
-        response = connection.readline().decode("ascii", errors="replace").strip()
+        response = read_line(connection)
         if response.startswith("READY") or not response:
             continue
         return response
@@ -40,7 +64,7 @@ def format_check(event_id, identity, decision):
 def read_ack(connection, expected, timeout=4):
     deadline = monotonic() + timeout
     while monotonic() < deadline:
-        response = connection.readline().decode("ascii", errors="replace").strip()
+        response = read_line(connection)
         if response.startswith("READY") or not response:
             continue
         if response == expected:

@@ -18,7 +18,7 @@ from scripts.dataset_capture import verify_vault
 from scripts.face_pipeline import load_detector, load_models
 from scripts.hog_knn import PEOPLE
 from scripts.latch_serial import (
-    SERVO_CLOSED, SERVO_MAX, SERVO_MIN, SERVO_OPEN, latch_ready, ping_firmware, send_decision, send_servo_test,
+    SERVO_CLOSED, SERVO_MAX, SERVO_MIN, SERVO_OPEN, latch_ready, open_latch_port, ping_firmware, send_decision, send_servo_test,
 )
 from scripts.live_k01 import HUMAN_RUN, build_identify, face_descriptor, load_keras, paint_regions, recognize_frame
 from scripts.phone_serial_bench import local_stream_url
@@ -726,10 +726,7 @@ class OperatorApp:
 
     def _open_port(self, port):
         try:
-            import serial
-            self.connection = serial.Serial(port, 115200, timeout=.2, write_timeout=2)
-            sleep(2)
-            self.connection.reset_input_buffer()
+            self.connection = open_latch_port(port)
             pong = ping_firmware(self.connection)
             self.latch_ok = latch_ready(pong)
             self.ack_text = pong

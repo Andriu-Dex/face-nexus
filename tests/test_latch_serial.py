@@ -59,3 +59,13 @@ def test_manual_angle_checks_firmware_range_and_sends_one_move(monkeypatch):
     assert not port.written
     assert send_servo_test("COM5", "move", 45) == "SERVO ACK 45"
     assert port.written == [b"PING\n", b"SERVO RANGE\n", b"SERVO MOVE 45\n"]
+
+
+def test_read_line_drops_port_open_noise():
+    from scripts.latch_serial import read_line
+
+    class Noisy:
+        def readline(self):
+            return bytes((0xFF,)) * 40 + b"ACK 7 K01 GRANTED ACTUATED\n"
+
+    assert read_line(Noisy()) == "ACK 7 K01 GRANTED ACTUATED"
