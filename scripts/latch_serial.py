@@ -7,6 +7,7 @@ from scripts.hog_knn import PEOPLE
 
 LATCH_PONG = "PONG FACENEXUS LATCH 1"
 BENCH_PONG = "PONG FACENEXUS BENCH 1"
+PROTOCOL_PREFIXES = ("ACK", "ERROR", "SERVO")
 
 
 def read_line(connection):
@@ -38,9 +39,8 @@ def ping_firmware(connection, timeout=2):
     deadline = monotonic() + timeout
     while monotonic() < deadline:
         response = read_line(connection)
-        if response.startswith("READY") or not response:
-            continue
-        return response
+        if response.startswith("PONG"):
+            return response
     raise TimeoutError("Sin respuesta a PING.")
 
 
@@ -65,11 +65,12 @@ def read_ack(connection, expected, timeout=4):
     deadline = monotonic() + timeout
     while monotonic() < deadline:
         response = read_line(connection)
-        if response.startswith("READY") or not response:
-            continue
         if response == expected:
             return response
-        raise RuntimeError(f"Respuesta inesperada: {response}")
+        # Solo un mensaje del protocolo distinto al esperado es una falla; un fragmento
+        # de ruido serie se ignora y se sigue esperando hasta el límite de tiempo.
+        if response.startswith(PROTOCOL_PREFIXES):
+            raise RuntimeError(f"Respuesta inesperada: {response}")
     raise TimeoutError("Sin acuse del pestillo.")
 
 
@@ -94,30 +95,31 @@ SERVO_MIN = 0
 SERVO_MAX = 180
 
 
-def send_servo_test(port, action="cycle", degrees=None):
-    """Una operación manual por conexión, sin decisiones de reconocimiento."""
-    import serial
-
+def run_servo_test(connection, action="cycle", degrees=None):
+    """Una operación manual sobre una conexión ya abierta y verificada."""
     if action not in ("check", "cycle", "move"):
         raise ValueError("Operación de servo desconocida.")
     if action == "move" and (type(degrees) is not int or not SERVO_MIN <= degrees <= SERVO_MAX):
         raise ValueError(f"El ángulo debe estar entre {SERVO_MIN}° y {SERVO_MAX}°.")
-    connection = serial.Serial(baudrate=115200, timeout=.2, write_timeout=2)
-    connection.port = port
-    connection.dtr = False
-    connection.rts = False
-    with connection:
-        sleep(2)
-        connection.reset_input_buffer()
-        pong = ping_firmware(connection)
-        if not latch_ready(pong):
-            raise RuntimeError("El ESP32 no respondió como firmware LATCH.")
-        if action == "check":
-            return pong
-        if action == "move":
-            connection.write(b"SERVO RANGE\n")
-            read_ack(connection, f"SERVO RANGE {SERVO_MIN} {SERVO_MAX}")
-            connection.write(f"SERVO MOVE {degrees}\n".encode("ascii"))
-            return read_ack(connection, f"SERVO ACK {degrees}")
-        event = str(int(monotonic() * 1000))[-16:]
-        return send_decision(connection, event, PEOPLE[0], "GRANTED")["ack"]
+    pong = ping_firmware(connection)
+    if not latch_ready(pong):
+        raise RuntimeError("El ESP32 no respondió como firmware LATCH.")
+    if action == "check":
+        return pong
+    if action == "move":
+        connection.write(b"SERVO RANGE\n")
+        read_ack(connection, f"SERVO RANGE {SERVO_MIN} {SERVO_MAX}")
+        connection.write(f"SERVO MOVE {degrees}\n".encode("ascii"))
+        return read_ack(connection, f"SERVO ACK {degrees}")
+    event = str(int(monotonic() * 1000))[-16:]
+    return send_decision(connection, event, PEOPLE[0], "GRANTED")["ack"]
+
+
+def send_servo_test(port, action="cycle", degrees=None):
+    """Abre el puerto solo para esta operación (cuando el reconocimiento no lo tiene abierto)."""
+    if action not in ("check", "cycle", "move"):
+        raise ValueError("Operación de servo desconocida.")
+    if action == "move" and (type(degrees) is not int or not SERVO_MIN <= degrees <= SERVO_MAX):
+        raise ValueError(f"El ángulo debe estar entre {SERVO_MIN}° y {SERVO_MAX}°.")
+    with open_latch_port(port) as connection:
+        return run_servo_test(connection, action, degrees)

@@ -52,8 +52,7 @@ def test_manual_angle_checks_firmware_range_and_sends_one_move(monkeypatch):
             pass
 
     port = Port([LATCH_PONG, "SERVO RANGE 0 180", "SERVO ACK 45"])
-    monkeypatch.setattr("serial.Serial", lambda **_kwargs: port)
-    monkeypatch.setattr("scripts.latch_serial.sleep", lambda _seconds: None)
+    monkeypatch.setattr("scripts.latch_serial.open_latch_port", lambda _port: port)
     with pytest.raises(ValueError, match="ángulo"):
         send_servo_test("COM5", "move", 181)
     assert not port.written

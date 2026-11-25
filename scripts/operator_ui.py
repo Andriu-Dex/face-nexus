@@ -18,7 +18,7 @@ from scripts.dataset_capture import verify_vault
 from scripts.face_pipeline import load_detector, load_models
 from scripts.hog_knn import PEOPLE
 from scripts.latch_serial import (
-    SERVO_CLOSED, SERVO_MAX, SERVO_MIN, SERVO_OPEN, latch_ready, open_latch_port, ping_firmware, send_decision, send_servo_test,
+    SERVO_CLOSED, SERVO_MAX, SERVO_MIN, SERVO_OPEN, latch_ready, open_latch_port, ping_firmware, run_servo_test, send_decision, send_servo_test,
 )
 from scripts.live_k01 import HUMAN_RUN, build_identify, face_descriptor, load_keras, paint_regions, recognize_frame
 from scripts.phone_serial_bench import local_stream_url
@@ -608,9 +608,6 @@ class OperatorApp:
         self.servo_buttons.append(move)
         self.servo_status = tk.StringVar(value="Selecciona una operación. Verifica el recorrido visualmente.")
         ttk.Label(panel, textvariable=self.servo_status, wraplength=680).pack(anchor="w")
-        if self.port:
-            for button in self.servo_buttons:
-                button.state(["disabled"])
 
     def _set_status(self, text):
         self.status.config(text=text)
@@ -1000,7 +997,7 @@ class OperatorApp:
 
     def _signal_lost(self):
         """Fallo de cámara: deja de mostrar Autorizado de vivo y marca el fotograma."""
-        self.gate.note_fault()
+        self.gate.interrupt()
         self._preview_slot.clear()
         self._result_slot.clear()
         self._shown_seq = 0
@@ -1091,7 +1088,7 @@ class OperatorApp:
         if now - self._live_decision_at <= DECISION_TTL:
             return
         self._live_decision = False
-        self.gate.note_fault()
+        self.gate.interrupt()
         self._refresh_rearm()
         scene = {
             "outcome": "STALE",
@@ -1189,6 +1186,17 @@ class OperatorApp:
             except ValueError:
                 self.servo_status.set(f"Escribe un ángulo entero entre {SERVO_MIN}° y {SERVO_MAX}°.")
                 return
+        if self.connection is not None:
+            # El reconocimiento ya tiene el puerto: se usa la misma conexión en este hilo,
+            # así nunca hay dos escrituras simultáneas en el puerto serie.
+            try:
+                ack = run_servo_test(self.connection, action, degrees)
+            except (OSError, RuntimeError, TimeoutError, ValueError) as error:
+                message = f"No se confirmó la operación. {error}"
+            else:
+                message = f"{self.port} · {ack}"
+            self._finish_servo_test(message)
+            return
         for button in self.servo_buttons:
             button.state(["disabled"])
         self.servo_status.set(f"Esperando respuesta del ESP32 en {port}…")

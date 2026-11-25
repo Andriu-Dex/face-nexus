@@ -35,11 +35,18 @@ class PresentationGate:
         self.can_send = True
         self.last_sent = None
 
+    def interrupt(self):
+        """La autorización se perdió (sin rostro, señal perdida, caducidad): exige una racha nueva.
+
+        No bloquea: al dejar de renovar, el ESP32 cierra solo tras 3 s.
+        """
+        self.streak = 0
+
     def note_fault(self):
         self.can_send = False
 
     def note_disconnect(self):
-        self.note_fault()
+        self.interrupt()
 
     def on_frame(self, kind, now=None):
         """True si este fotograma debe renovar la orden de apertura.

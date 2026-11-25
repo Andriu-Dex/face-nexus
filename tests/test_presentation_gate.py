@@ -52,3 +52,13 @@ def test_scene_kind_splits_empty_from_uncertain():
     assert scene_kind({"outcome": "DENIED", "reason": "no_face"}) == EMPTY
     assert scene_kind({"outcome": "DENIED", "reason": "unknown_identity"}) == UNCERTAIN
     assert scene_kind({"outcome": "DENIED", "reason": "permission_inactive"}) == UNCERTAIN
+
+
+def test_lost_authorization_needs_new_streak_but_does_not_block():
+    gate = PresentationGate()
+    consensus(gate, now=1.0)
+    assert gate.on_frame(AUTHORIZED, now=1.0) is True
+    gate.interrupt()
+    assert gate.can_send is True
+    consensus(gate, now=9.0)
+    assert gate.on_frame(AUTHORIZED, now=9.0) is True
