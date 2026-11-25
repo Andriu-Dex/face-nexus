@@ -996,8 +996,11 @@ class OperatorApp:
         return granted, denied
 
     def _signal_lost(self):
-        """Fallo de cámara: deja de mostrar Autorizado de vivo y marca el fotograma."""
-        self.gate.interrupt()
+        """Fallo de cámara: deja de mostrar Autorizado de vivo y marca el fotograma.
+
+        Es una falla real (no la salida normal de una persona): exige rearme del operador.
+        """
+        self.gate.note_fault()
         self._preview_slot.clear()
         self._result_slot.clear()
         self._shown_seq = 0

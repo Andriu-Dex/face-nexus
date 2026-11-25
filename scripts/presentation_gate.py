@@ -43,7 +43,9 @@ class PresentationGate:
         self.streak = 0
 
     def note_fault(self):
+        """Falla serie o de cámara: bloquea hasta que el operador rearme."""
         self.can_send = False
+        self.streak = 0
 
     def note_disconnect(self):
         self.interrupt()

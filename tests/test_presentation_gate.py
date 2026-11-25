@@ -62,3 +62,10 @@ def test_lost_authorization_needs_new_streak_but_does_not_block():
     assert gate.can_send is True
     consensus(gate, now=9.0)
     assert gate.on_frame(AUTHORIZED, now=9.0) is True
+
+
+def test_fault_blocks_even_with_new_streak():
+    gate = PresentationGate()
+    gate.note_fault()
+    consensus(gate, now=2.0)
+    assert gate.on_frame(AUTHORIZED, now=2.0) is False
