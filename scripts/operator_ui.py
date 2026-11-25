@@ -27,6 +27,8 @@ from scripts.presentation_gate import PresentationGate, scene_kind
 
 BG = "#EDF2F6"
 MODEL_OPTIONS = {
+    "CNN propia + SFace (final)": "identity_four_other/identity_four_0406_real_fusion_w075",
+    "CNN propia": "identity_four_other/identity_four_phone_04_cnn_run1",
     "HOG original": "identity_four/identity_four_v2",
     "HOG ampliado": "identity_four_other/identity_four_phone_04_expanded",
     "HOG alineado": "identity_four_other/identity_four_phone_04_aligned",
@@ -1310,7 +1312,7 @@ def main():
     parser.add_argument("--models", type=Path, default=Path("models/verified"))
     parser.add_argument("--port", default="")
     parser.add_argument(
-        "--trial", default="identity_four/identity_four_v2",
+        "--trial", default="identity_four_other/identity_four_0406_real_fusion_w075",
         help="identity_four/identity_four_v2 o identity_four_other/<run>. No pisa v2.")
     parser.add_argument(
         "--actuate", action="store_true",
