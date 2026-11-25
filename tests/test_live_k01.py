@@ -22,11 +22,11 @@ def test_knn_threshold_rejects_far_k01_vote():
     labels = np.array(["K01", "K01", "OTHER"])
     close = identify_knn(gallery, labels, max_distance=.05)
     far = identify_knn(gallery, labels, max_distance=.05)
-    label, accepted, score = close(query)
+    label, accepted, score, _ = close(query)
     assert label == "K01" and accepted and "T=" in score
     other = np.zeros(FEATURE_COUNT, np.float32)
     other[-1] = 1
-    label, accepted, _ = far(other)
+    label, accepted, *_ = far(other)
     assert not accepted
 
 

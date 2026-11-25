@@ -1,6 +1,7 @@
 """Interfaz local: cámara o imagen, decisión, permisos e historial sin fotos."""
 
 import argparse
+from datetime import datetime
 import os
 import threading
 from pathlib import Path
@@ -22,7 +23,7 @@ from scripts.latch_serial import (
 )
 from scripts.live_k01 import HUMAN_RUN, build_identify, face_descriptor, load_keras, paint_regions, recognize_frame
 from scripts.phone_serial_bench import local_stream_url
-from scripts.presentation_gate import PresentationGate, scene_kind
+from scripts.presentation_gate import CONSENSUS_FRAMES, PresentationGate, scene_kind
 
 
 BG = "#EDF2F6"
@@ -41,6 +42,44 @@ ACCENT = "#006B68"
 DENIED_INK = "#7A2436"
 WAIT_INK = "#4A5C6A"
 HINT = "#D7E3EC"
+HEADER = "#0F2233"
+ACCENT_SOFT = "#4FB3A9"
+CHIP_IDLE = "#3A4F61"
+SURFACE_ALT = "#F4F7FA"
+TRACK = "#E3EAF0"
+TRACK_DARK = "#2C4254"
+TAG_BG = "#0F2233"
+AMBER = "#C98A16"
+REJECT = "#D9475B"
+ICON_FONT = "Segoe MDL2 Assets"
+ICON_LOCK = "\uE72E"
+ICON_UNLOCK = "\uE785"
+ICON_WARNING = "\uE7BA"
+ICON_SHIELD = "\uEA18"
+LATCH_HOLD_SECONDS = 3.0
+PIPELINE_STEPS = (
+    ("phone", "Celular (captura)"),
+    ("detect", "YuNet (rostro)"),
+    ("identify", "CNN propia + SFace → k-NN"),
+    ("decide", "Permiso"),
+    ("esp32", "ESP32 (pestillo)"),
+)
+# Cifras medidas y registradas en docs/decisions.md (D-90 a D-92); no se calculan aquí.
+MODEL_FACTS = {
+    "identity_four_other/identity_four_0406_real_fusion_w075": (
+        "CNN propia (75 %) + SFace de apoyo (25 %) · k-NN, k = 3 · T = 1,011 · G = 0,114",
+        ["Integrantes, video 05: 89 % de fotogramas aceptados; 4/4 abren",
+         "Desconocidos reales reservados: 0/5 abren",
+         "Desconocidos LFW de validación: 0/999 aceptados",
+         "Confusiones entre integrantes: 0"],
+    ),
+    "identity_four_other/identity_four_phone_04_cnn_run1": (
+        "CNN propia sola · k-NN, k = 3 · galería del video 04",
+        ["Integrantes, video 05: 68/75 fotogramas aceptados",
+         "Desconocidos LFW de validación: 2/999 aceptados",
+         "Confusiones entre integrantes: 0"],
+    ),
+}
 MAP_PARTS = ("private", "identity_labels.json")
 NAME_MAP = Path(__file__).resolve().parents[1] / "private" / "external_frames_mapping_20261117.json"
 DEFAULT_VAULT = Path("V:/FaceNexus")
@@ -169,6 +208,8 @@ def technical_lines(scene, labels):
     score = row.get("score_text")
     if score:
         lines.append(score)
+    if "human" in row:
+        lines.append(f"CNN humano/no humano (diagnóstico): {'humano' if row['human'] else 'no humano'}")
     return "\n".join(lines)
 
 
@@ -322,6 +363,24 @@ def viewer_layout(frame, canvas_w, canvas_h):
     return shown, origin_x, origin_y, shown_w, shown_h
 
 
+def match_strength(distance, max_distance):
+    """0–1 para la barra de la etiqueta: 1 si d ≤ T/2, 0 si d ≥ T. Solo es visual."""
+    if not isinstance(distance, (int, float)) or not isinstance(max_distance, (int, float)):
+        return None
+    if max_distance <= 0:
+        return None
+    return float(min(1., max(0., (max_distance - distance) / (max_distance / 2))))
+
+
+def face_style(item):
+    """Color y texto por rostro: autorizado, permiso revocado o desconocido."""
+    if item.get("granted"):
+        return ACCENT_SOFT, "Autorizado"
+    if item.get("reason") == "permission_inactive":
+        return AMBER, "Permiso revocado"
+    return REJECT, "Desconocido"
+
+
 def overlay_boxes(scene):
     boxes = []
     for row in scene.get("regions") or []:
@@ -331,6 +390,10 @@ def overlay_boxes(scene):
                 "box": list(box),
                 "granted": row.get("outcome") == "GRANTED",
                 "identity": row.get("identity") or "UNKNOWN",
+                "reason": row.get("reason"),
+                "human": row.get("human", True),
+                "distance": row.get("distance"),
+                "max_distance": row.get("max_distance"),
             })
     return boxes
 
@@ -396,6 +459,9 @@ class OperatorApp:
         self._paint_key = None
         self._live_decision = False
         self._live_decision_at = None
+        self._ui_streak = 0
+        self._latch_open_until = 0.0
+        self._hist_time = ""
         self._capture_thread = None
         self._infer_thread = None
         self.metrics = {"view_fps": 0.0, "infer_ms": 0.0, "frame_age_ms": 0.0}
@@ -428,125 +494,254 @@ class OperatorApp:
     def _build(self):
         self.window.columnconfigure(0, weight=1)
         self.window.rowconfigure(1, weight=1)
-        bar = tk.Frame(self.window, bg=SURFACE, padx=20, pady=10)
+        style = ttk.Style(self.window)
+        style.configure("TNotebook", background=BG, borderwidth=0)
+        style.configure("TNotebook.Tab", font=self._font(10, bold=True), padding=(18, 6))
+
+        bar = tk.Frame(self.window, bg=HEADER, padx=22, pady=12)
         bar.grid(row=0, column=0, sticky="ew")
-        bar.columnconfigure(0, weight=1)
-        tk.Label(bar, text="FaceNexus", font=self._font(18, bold=True), fg=INK, bg=SURFACE
-                 ).grid(row=0, column=0, sticky="w")
-        sim_text = self._mode_text()
-        if self.trial_info.get("label"):
-            sim_text = f"{sim_text} · {self.trial_info['label']}"
-        self.model_banner = tk.Label(bar, text=sim_text, font=self._font(11), fg=ACCENT, bg=SURFACE)
-        self.model_banner.grid(row=0, column=1, sticky="e")
+        bar.columnconfigure(1, weight=1)
+        brand = tk.Frame(bar, bg=HEADER)
+        brand.grid(row=0, column=0, sticky="w")
+        tk.Label(brand, text=ICON_SHIELD, font=(ICON_FONT, 22), fg=ACCENT_SOFT, bg=HEADER
+                 ).pack(side=tk.LEFT, padx=(0, 10))
+        titles = tk.Frame(brand, bg=HEADER)
+        titles.pack(side=tk.LEFT)
+        tk.Label(titles, text="FaceNexus", font=self._font(18, bold=True), fg=SURFACE, bg=HEADER
+                 ).pack(anchor="w")
+        tk.Label(titles, text="Control de acceso por reconocimiento facial",
+                 font=self._font(9), fg=HINT, bg=HEADER).pack(anchor="w")
+        chips = tk.Frame(bar, bg=HEADER)
+        chips.grid(row=0, column=1, sticky="e")
+        self.chip_camera = self._chip(chips, "Celular")
+        self.chip_latch = self._chip(chips, "ESP32")
+        self.chip_mode = self._chip(chips, self._mode_text())
+        self.model_banner = tk.Label(bar, text=self._model_name(), font=self._font(9),
+                                     fg=HINT, bg=HEADER, anchor="e")
+        self.model_banner.grid(row=1, column=1, sticky="e", pady=(6, 0))
 
         tabs = ttk.Notebook(self.window)
-        tabs.grid(row=1, column=0, sticky="nsew", padx=16, pady=(0, 16))
+        tabs.grid(row=1, column=0, sticky="nsew", padx=16, pady=(12, 16))
         body = tk.Frame(tabs, bg=BG)
         tabs.add(body, text="Reconocimiento")
         servo = tk.Frame(tabs, bg=BG)
-        tabs.add(servo, text="Servo")
+        tabs.add(servo, text="Pestillo (ESP32)")
         self._build_servo_tab(servo)
         body.columnconfigure(0, weight=1)
         body.rowconfigure(0, weight=1)
 
         stage = tk.Frame(body, bg=BG)
-        stage.grid(row=0, column=0, sticky="nsew", padx=(0, 12))
-        stage.rowconfigure(0, weight=1)
-        stage.rowconfigure(1, minsize=56)
+        stage.grid(row=0, column=0, sticky="nsew", padx=(0, 12), pady=(8, 0))
+        stage.rowconfigure(1, weight=1)
         stage.columnconfigure(0, weight=1)
+        self.pipeline = tk.Frame(stage, bg=BG)
+        self.pipeline.grid(row=0, column=0, sticky="ew", pady=(0, 8))
+        self.pipe_steps = {}
+        for index, (key, text) in enumerate(PIPELINE_STEPS):
+            if index:
+                tk.Label(self.pipeline, text="→", font=self._font(11), fg=WAIT_INK,
+                         bg=BG).pack(side=tk.LEFT, padx=4)
+            step = tk.Label(self.pipeline, text=text, font=self._font(9, bold=True),
+                            fg=WAIT_INK, bg=SURFACE, padx=10, pady=4)
+            step.pack(side=tk.LEFT)
+            self.pipe_steps[key] = step
         self.viewer = tk.Canvas(stage, bg=VIEWER, highlightthickness=0, cursor="arrow")
-        self.viewer.grid(row=0, column=0, sticky="nsew")
+        self.viewer.grid(row=1, column=0, sticky="nsew")
         self.viewer.bind("<Configure>", lambda _event: self._paint_viewer(force=True))
         self._hint_id = None
 
         controls = tk.Frame(stage, bg=BG, pady=10)
-        controls.grid(row=1, column=0, sticky="ew")
-        self.cam_btn = tk.Button(
-            controls, text="Conectar celular", command=self._camera_dialog, font=self._font(11, bold=True),
-            bg=ACCENT, fg=SURFACE, activebackground="#005955", activeforeground=SURFACE,
-            relief="flat", padx=18, pady=8, cursor="hand2")
+        controls.grid(row=2, column=0, sticky="ew")
+        self.cam_btn = self._button(controls, "Conectar celular",
+                                    self._camera_dialog, primary=True)
         self.cam_btn.pack(side=tk.LEFT)
-        self.stop_btn = tk.Button(
-            controls, text="Detener video", command=self._stop_camera, font=self._font(10),
-            bg=SURFACE, fg=INK, relief="flat", padx=12, pady=8, cursor="hand2", state="disabled")
+        self.stop_btn = self._button(controls, "Detener video", self._stop_camera)
+        self.stop_btn.config(state="disabled")
         self.stop_btn.pack(side=tk.LEFT, padx=(8, 0))
-        tk.Button(controls, text="Abrir imagen", command=self._open_image, font=self._font(10),
-                  bg=SURFACE, fg=INK, relief="flat", padx=12, pady=8, cursor="hand2"
-                  ).pack(side=tk.LEFT, padx=(8, 0))
-        tk.Button(controls, text="Probar carpeta", command=self._open_folder, font=self._font(10),
-                  bg=SURFACE, fg=INK, relief="flat", padx=12, pady=8, cursor="hand2"
-                  ).pack(side=tk.LEFT, padx=(8, 0))
-        self.rearm_btn = tk.Button(
-            controls, text="Rearmar pestillo", command=self._rearm, font=self._font(10),
-            bg=SURFACE, fg=INK, relief="flat", padx=12, pady=8, cursor="hand2")
+        self._button(controls, "Abrir imagen", self._open_image
+                     ).pack(side=tk.LEFT, padx=(8, 0))
+        self._button(controls, "Probar carpeta", self._open_folder
+                     ).pack(side=tk.LEFT, padx=(8, 0))
+        self.rearm_btn = self._button(controls, "Rearmar pestillo", self._rearm)
         self.rearm_btn.pack(side=tk.LEFT, padx=(16, 0))
-        self.cam_state_lbl = tk.Label(controls, text="", font=self._font(9), fg=WAIT_INK, bg=BG)
+        self.cam_state_lbl = tk.Label(controls, text="", font=self._font(9, bold=True),
+                                      fg=WAIT_INK, bg=BG)
         self.cam_state_lbl.pack(side=tk.LEFT, padx=(16, 0))
         self.hint_lbl = tk.Label(controls, text="", font=self._font(9), fg=WAIT_INK, bg=BG)
         self.hint_lbl.pack(side=tk.LEFT, padx=(8, 0))
 
-        side = tk.Frame(body, bg=SURFACE, width=320, padx=16, pady=16)
-        side.grid(row=0, column=1, sticky="ns")
-        side.grid_propagate(False)
-        tk.Label(side, text="Decisión", font=self._font(9), fg=WAIT_INK, bg=SURFACE).pack(anchor="w")
-        self.decision_title = tk.Label(side, text="Espera", font=self._font(22, bold=True),
-                                       fg=WAIT_INK, bg=SURFACE, anchor="w")
-        self.decision_title.pack(anchor="w", pady=(2, 0))
-        self.identity_lbl = tk.Label(side, text="Identidad: —", font=self._font(12),
-                                     fg=INK, bg=SURFACE, anchor="w", wraplength=280)
-        self.identity_lbl.pack(anchor="w", pady=(4, 0))
-        self.detail_lbl = tk.Label(side, text="Aún no hay una presentación.", font=self._font(10),
-                                   fg=WAIT_INK, bg=SURFACE, anchor="w", wraplength=280, justify="left")
-        self.detail_lbl.pack(anchor="w", pady=(4, 8))
-        self.tech_var = tk.BooleanVar(value=False)
-        tk.Checkbutton(
-            side, text="Detalle técnico", variable=self.tech_var, command=self._refresh_tech,
-            font=self._font(9), fg=WAIT_INK, bg=SURFACE, activebackground=SURFACE,
-            selectcolor=SURFACE, anchor="w").pack(anchor="w")
-        self.tech_lbl = tk.Label(side, text="", font=self._font(8), fg=WAIT_INK, bg=SURFACE,
-                                 anchor="w", justify="left", wraplength=280)
-        self.tech_lbl.pack(anchor="w", pady=(0, 8))
-        self._scene = {}
+        side_outer = tk.Frame(body, bg=BG, width=380)
+        side_outer.grid(row=0, column=1, sticky="ns", pady=(8, 0))
+        side_outer.grid_propagate(False)
+        side_outer.rowconfigure(0, weight=1)
+        side_outer.columnconfigure(0, weight=1)
+        side_canvas = tk.Canvas(side_outer, bg=BG, highlightthickness=0, width=364)
+        side_scroll = tk.Scrollbar(side_outer, orient="vertical", command=side_canvas.yview)
+        side = tk.Frame(side_canvas, bg=BG)
+        side.bind("<Configure>", lambda _e: side_canvas.configure(scrollregion=side_canvas.bbox("all")))
+        side_canvas.create_window((0, 0), window=side, anchor="nw", width=364)
+        side_canvas.configure(yscrollcommand=side_scroll.set)
+        side_canvas.grid(row=0, column=0, sticky="nsew")
+        side_scroll.grid(row=0, column=1, sticky="ns")
+        side_canvas.bind_all(
+            "<MouseWheel>", lambda e: side_canvas.yview_scroll(int(-e.delta / 120), "units"))
 
-        tk.Label(side, text="Permisos", font=self._font(9), fg=WAIT_INK, bg=SURFACE).pack(anchor="w")
+        # Tarjeta de decisión: lo primero que debe leerse.
+        self.decision_card = tk.Frame(side, bg=WAIT_INK, padx=16, pady=14)
+        self.decision_card.pack(fill="x")
+        top = tk.Frame(self.decision_card, bg=WAIT_INK)
+        top.pack(fill="x")
+        self.decision_icon = tk.Label(top, text=ICON_LOCK, font=(ICON_FONT, 30), fg=SURFACE,
+                                      bg=WAIT_INK)
+        self.decision_icon.pack(side=tk.LEFT, padx=(0, 12))
+        texts = tk.Frame(top, bg=WAIT_INK)
+        texts.pack(side=tk.LEFT, fill="x", expand=True)
+        self.decision_title = tk.Label(texts, text="En espera", font=self._font(17, bold=True),
+                                       fg=SURFACE, bg=WAIT_INK, anchor="w")
+        self.decision_title.pack(anchor="w")
+        self.identity_lbl = tk.Label(texts, text="Identidad: —", font=self._font(12, bold=True),
+                                     fg=SURFACE, bg=WAIT_INK, anchor="w", wraplength=250,
+                                     justify="left")
+        self.identity_lbl.pack(anchor="w")
+        self.detail_lbl = tk.Label(self.decision_card, text="Aún no hay una presentación.",
+                                   font=self._font(10), fg=SURFACE, bg=WAIT_INK, anchor="w",
+                                   wraplength=330, justify="left")
+        self.detail_lbl.pack(anchor="w", pady=(10, 0))
+        self._card_widgets = [self.decision_card, top, texts, self.decision_icon,
+                              self.decision_title, self.identity_lbl, self.detail_lbl]
+
+        # Verificación continua y estado del pestillo (nodo IoT).
+        latch = self._section(side, "Pestillo · nodo IoT")
+        self.streak_lbl = tk.Label(latch, text="", font=self._font(9), fg=WAIT_INK, bg=SURFACE,
+                                   anchor="w")
+        self.streak_lbl.pack(anchor="w")
+        self.streak_bar = tk.Canvas(latch, height=10, bg=TRACK, highlightthickness=0)
+        self.streak_bar.pack(fill="x", pady=(4, 10))
+        row = tk.Frame(latch, bg=SURFACE)
+        row.pack(fill="x")
+        self.latch_icon = tk.Label(row, text=ICON_LOCK, font=(ICON_FONT, 20), fg=WAIT_INK,
+                                   bg=SURFACE)
+        self.latch_icon.pack(side=tk.LEFT, padx=(0, 10))
+        self.latch_state_lbl = tk.Label(row, text="Cerrado", font=self._font(13, bold=True),
+                                        fg=INK, bg=SURFACE, anchor="w", justify="left")
+        self.latch_state_lbl.pack(side=tk.LEFT, fill="x")
+        self.command_lbl = tk.Label(latch, text="Última etiqueta enviada: —", font=self._font(9),
+                                    fg=WAIT_INK, bg=SURFACE, anchor="w", justify="left",
+                                    wraplength=320)
+        self.command_lbl.pack(anchor="w", pady=(8, 0))
+
+        perms = self._section(side, "Permisos de acceso")
         self.perm_vars = {}
         for person in self.permissions:
             var = tk.BooleanVar(value=self.permissions[person])
             self.perm_vars[person] = var
+            line = tk.Frame(perms, bg=SURFACE)
+            line.pack(fill="x", pady=1)
             tk.Checkbutton(
-                side, text=display_person(person, self.labels), variable=var,
-                command=self._sync_permissions, font=self._font(10), fg=INK, bg=SURFACE,
-                activebackground=SURFACE, selectcolor=SURFACE, anchor="w",
-            ).pack(anchor="w")
+                line, text=display_person(person, self.labels), variable=var,
+                command=self._sync_permissions, font=self._font(10, bold=True), fg=INK,
+                bg=SURFACE, activebackground=SURFACE, selectcolor=SURFACE, anchor="w",
+            ).pack(side=tk.LEFT)
+            state = tk.Label(line, text="", font=self._font(8, bold=True), bg=SURFACE, padx=6)
+            state.pack(side=tk.RIGHT)
+            var.trace_add("write", lambda *_a, v=var, s=state: self._paint_permission(v, s))
+            self._paint_permission(var, state)
 
-        tk.Label(side, text="Historial", font=self._font(9), fg=WAIT_INK, bg=SURFACE
-                 ).pack(anchor="w", pady=(14, 4))
-        log_frame = tk.Frame(side, bg=SURFACE)
+        model = self._section(side, "Modelo y exactitud medida")
+        self.model_lbl = tk.Label(model, text="", font=self._font(9), fg=INK, bg=SURFACE,
+                                  anchor="w", justify="left", wraplength=320)
+        self.model_lbl.pack(anchor="w")
+        if self.model_loader is not None and not self.port:
+            names = {trial: name for name, trial in MODEL_OPTIONS.items()}
+            self.model_selection = tk.StringVar(value=names.get(self.trial_info.get("label"), ""))
+            ttk.Label(model, text="Cambiar modelo para comparar", background=SURFACE
+                      ).pack(anchor="w", pady=(8, 2))
+            selector = ttk.Combobox(model, textvariable=self.model_selection,
+                                    values=list(MODEL_OPTIONS), state="readonly")
+            selector.pack(fill="x")
+            selector.bind("<<ComboboxSelected>>", self._select_model)
+        self._refresh_model_card()
+
+        hist = self._section(side, "Historial (sin imágenes)")
+        log_frame = tk.Frame(hist, bg=SURFACE)
         log_frame.pack(fill="both", expand=True)
         scroll = tk.Scrollbar(log_frame)
         scroll.pack(side=tk.RIGHT, fill="y")
         self.log = tk.Listbox(
-            log_frame, width=34, height=10, font=self._font(9), fg=INK, bg=BG,
-            relief="flat", yscrollcommand=scroll.set, activestyle="none")
+            log_frame, width=40, height=9, font=self._font(9), fg=INK, bg=SURFACE_ALT,
+            relief="flat", yscrollcommand=scroll.set, activestyle="none", highlightthickness=0)
         self.log.pack(side=tk.LEFT, fill="both", expand=True)
         scroll.config(command=self.log.yview)
 
-        self.hw_lbl = tk.Label(side, text="", font=self._font(8), fg=WAIT_INK, bg=SURFACE,
-                               wraplength=280, justify="left", anchor="w")
-        self.hw_lbl.pack(anchor="w", pady=(10, 0))
-        if self.model_loader is not None and not self.port:
-            names = {trial: name for name, trial in MODEL_OPTIONS.items()}
-            self.model_selection = tk.StringVar(value=names.get(self.trial_info.get("label"), ""))
-            ttk.Label(side, text="Modelo de reconocimiento").pack(anchor="w", pady=(8, 2))
-            selector = ttk.Combobox(side, textvariable=self.model_selection,
-                                    values=list(MODEL_OPTIONS), state="readonly")
-            selector.pack(fill="x")
-            selector.bind("<<ComboboxSelected>>", self._select_model)
-        self.status = tk.Label(side, text="Listo", font=self._font(8), fg=WAIT_INK, bg=SURFACE,
-                               wraplength=280, justify="left", anchor="w")
+        tech = self._section(side, "Diagnóstico")
+        self.tech_var = tk.BooleanVar(value=False)
+        tk.Checkbutton(
+            tech, text="Mostrar detalle técnico (distancias, umbrales, huella)",
+            variable=self.tech_var, command=self._refresh_tech, font=self._font(9),
+            fg=WAIT_INK, bg=SURFACE, activebackground=SURFACE, selectcolor=SURFACE, anchor="w",
+            wraplength=320, justify="left").pack(anchor="w")
+        self.tech_lbl = tk.Label(tech, text="", font=("Consolas", 8), fg=WAIT_INK, bg=SURFACE,
+                                 anchor="w", justify="left", wraplength=320)
+        self.tech_lbl.pack(anchor="w")
+        self._scene = {}
+        self.hw_lbl = tk.Label(tech, text="", font=self._font(8), fg=WAIT_INK, bg=SURFACE,
+                               wraplength=320, justify="left", anchor="w")
+        self.hw_lbl.pack(anchor="w", pady=(6, 0))
+        self.status = tk.Label(tech, text="Listo", font=self._font(8), fg=WAIT_INK, bg=SURFACE,
+                               wraplength=320, justify="left", anchor="w")
         self.status.pack(anchor="w", pady=(4, 0))
         self._refresh_hw()
+        self._refresh_live_panel()
         self._paint_viewer()
+
+    def _chip(self, parent, text):
+        chip = tk.Label(parent, text=f"●  {text}", font=self._font(9, bold=True),
+                        fg=SURFACE, bg=CHIP_IDLE, padx=12, pady=5)
+        chip.pack(side=tk.LEFT, padx=(8, 0))
+        return chip
+
+    def _set_chip(self, chip, text, color):
+        if chip.cget("text") != text or chip.cget("bg") != color:
+            chip.config(text=text, bg=color)
+
+    def _button(self, parent, text, command, primary=False):
+        background = ACCENT if primary else SURFACE
+        return tk.Button(
+            parent, text=text, command=command,
+            font=self._font(11 if primary else 10, bold=primary),
+            bg=background, fg=SURFACE if primary else INK,
+            activebackground="#005955" if primary else HINT,
+            activeforeground=SURFACE if primary else INK,
+            disabledforeground=HINT, relief="flat", padx=16 if primary else 12, pady=8,
+            cursor="hand2")
+
+    def _section(self, parent, title):
+        frame = tk.Frame(parent, bg=SURFACE, padx=14, pady=12)
+        frame.pack(fill="x", pady=(10, 0))
+        tk.Label(frame, text=title.upper(), font=self._font(8, bold=True), fg=WAIT_INK,
+                 bg=SURFACE).pack(anchor="w", pady=(0, 6))
+        return frame
+
+    def _paint_permission(self, var, label):
+        if var.get():
+            label.config(text="ACTIVO", fg=ACCENT)
+        else:
+            label.config(text="REVOCADO", fg=DENIED_INK)
+
+    def _model_name(self):
+        ref = self.trial_info.get("label") or ""
+        name = next((name for name, trial in MODEL_OPTIONS.items() if trial == ref), ref)
+        return f"Modelo activo: {name}" if name else "Modelo activo: —"
+
+    def _refresh_model_card(self):
+        facts = MODEL_FACTS.get(self.trial_info.get("label"))
+        if facts:
+            title, lines = facts
+            text = title + "\n" + "\n".join(f"•  {line}" for line in lines)
+        else:
+            text = "Modelo de comparación. Sus cifras están en el informe."
+        self.model_lbl.config(text=text)
+        self.model_banner.config(text=self._model_name())
 
     def _select_model(self, _event=None):
         trial = MODEL_OPTIONS[self.model_selection.get()]
@@ -571,7 +766,7 @@ class OperatorApp:
         self.history.clear()
         self.log.delete(0, tk.END)
         self._hist_key = None
-        self.model_banner.config(text=f"{self._mode_text()} · {self.model_selection.get()}")
+        self._refresh_model_card()
         self._refresh_hw()
         self._set_status("Modelo cargado. Conecta el celular para empezar.")
         self._paint_viewer(force=True)
@@ -579,9 +774,20 @@ class OperatorApp:
     def _build_servo_tab(self, page):
         panel = tk.Frame(page, bg=SURFACE, padx=24, pady=20)
         panel.pack(anchor="nw", fill="x", padx=16, pady=16)
-        tk.Label(panel, text="Banco del pestillo", font=self._font(18, bold=True),
+        tk.Label(panel, text="Pestillo · ESP32 + servomotor SG90", font=self._font(18, bold=True),
                  bg=SURFACE, fg=INK).pack(anchor="w")
-        ttk.Label(panel, text="Puerto del ESP32").pack(anchor="w", pady=(16, 4))
+        tk.Label(
+            panel, justify="left", anchor="w", bg=SURFACE, fg=WAIT_INK, font=self._font(10),
+            wraplength=760,
+            text=("Nodo de actuación del sistema. Windows envía por USB serie la etiqueta "
+                  "«CHECK <evento> <K01–K04> GRANTED» mientras haya un integrante autorizado, "
+                  "renovándola cada 0,5 s. El ESP32 abre a "
+                  f"{SERVO_OPEN}° (señal PWM en GPIO25) y, si pasan 3 s sin renovación, cierra "
+                  f"solo a {SERVO_CLOSED}°: ante cualquier falla el pestillo queda cerrado.")
+        ).pack(anchor="w", pady=(6, 0))
+        tk.Label(panel, text="PRUEBA MANUAL", font=self._font(8, bold=True), fg=WAIT_INK,
+                 bg=SURFACE).pack(anchor="w", pady=(18, 0))
+        ttk.Label(panel, text="Puerto del ESP32").pack(anchor="w", pady=(8, 4))
         self.servo_port = tk.StringVar(value="COM5")
         ttk.Entry(panel, textvariable=self.servo_port, width=12).pack(anchor="w")
         actions = tk.Frame(panel, bg=SURFACE)
@@ -656,21 +862,63 @@ class OperatorApp:
             return
         for item in layer["boxes"]:
             left, top, right, bottom = item["box"]
-            color = ACCENT if item["granted"] else "#C45C6A"
-            x = origin_x + left * shown_w / src_w
-            y = origin_y + top * shown_h / src_h
-            self.viewer.create_rectangle(
-                x, y,
-                origin_x + right * shown_w / src_w,
-                origin_y + bottom * shown_h / src_h,
-                outline=color, width=3, tags="box")
-            label = self.viewer.create_text(
-                x + 5, y + 4, anchor="nw",
-                text=display_person(item["identity"], self.labels),
-                fill=SURFACE, font=self._font(10, bold=True), tags="face_label")
-            self.viewer.tag_lower(
-                self.viewer.create_rectangle(*self.viewer.bbox(label), fill=VIEWER, outline="",
-                                             tags="face_label"), label)
+            x0 = origin_x + left * shown_w / src_w
+            y0 = origin_y + top * shown_h / src_h
+            x1 = origin_x + right * shown_w / src_w
+            y1 = origin_y + bottom * shown_h / src_h
+            color, status = face_style(item)
+            self._draw_brackets(x0, y0, x1, y1, color)
+            name = display_person(item["identity"], self.labels)
+            match = match_strength(item.get("distance"), item.get("max_distance"))
+            lines = [(name, self._font(11, bold=True))]
+            detail = status if match is None else f"{status} · coincidencia {match:.0%}"
+            lines.append((detail, self._font(9)))
+            # YuNet es quien confirma el rostro humano en vivo; la CNN binaria va al detalle técnico.
+            lines.append(("Rostro humano (YuNet)", self._font(8)))
+            self._draw_tag(x0, y0, x1, lines, color, match)
+
+    def _draw_brackets(self, x0, y0, x1, y1, color):
+        """Esquinas marcadas y un contorno fino: se ve el rostro sin taparlo."""
+        size = max(12, min(x1 - x0, y1 - y0) * 0.22)
+        self.viewer.create_rectangle(x0, y0, x1, y1, outline=color, width=1, tags="box")
+        for cx, cy, dx, dy in ((x0, y0, 1, 1), (x1, y0, -1, 1), (x0, y1, 1, -1), (x1, y1, -1, -1)):
+            self.viewer.create_line(cx, cy, cx + dx * size, cy, fill=color, width=5,
+                                    capstyle="round", tags="box")
+            self.viewer.create_line(cx, cy, cx, cy + dy * size, fill=color, width=5,
+                                    capstyle="round", tags="box")
+
+    def _draw_tag(self, x0, y0, x1, lines, color, match):
+        """Etiqueta sobre el recuadro: nombre, estado, CNN humano y barra de coincidencia."""
+        pad, gap = 10, 2
+        widths, heights = [], []
+        for text, font in lines:
+            probe = self.viewer.create_text(0, 0, text=text, font=font, anchor="nw")
+            bx0, by0, bx1, by1 = self.viewer.bbox(probe)
+            self.viewer.delete(probe)
+            widths.append(bx1 - bx0)
+            heights.append(by1 - by0)
+        bar_h = 6 if match is not None else 0
+        width = max(max(widths) + 2 * pad, x1 - x0)
+        height = sum(heights) + gap * (len(lines) - 1) + 2 * pad + (bar_h + 6 if bar_h else 0)
+        top = y0 - height - 6
+        if top < 4:
+            top = y0 + 6
+        self.viewer.create_rectangle(x0, top, x0 + width, top + height, fill=TAG_BG,
+                                     outline=color, width=2, tags="face_label")
+        self.viewer.create_rectangle(x0, top, x0 + 6, top + height, fill=color, outline="",
+                                     tags="face_label")
+        y = top + pad
+        for (text, font), line_h, tone in zip(lines, heights, (SURFACE, color, HINT), strict=False):
+            self.viewer.create_text(x0 + pad + 4, y, text=text, font=font, fill=tone,
+                                    anchor="nw", tags="face_label")
+            y += line_h + gap
+        if bar_h:
+            track_x0, track_x1 = x0 + pad + 4, x0 + width - pad
+            self.viewer.create_rectangle(track_x0, y + 4, track_x1, y + 4 + bar_h, fill=TRACK_DARK,
+                                         outline="", tags="face_label")
+            self.viewer.create_rectangle(track_x0, y + 4,
+                                         track_x0 + (track_x1 - track_x0) * match,
+                                         y + 4 + bar_h, fill=color, outline="", tags="face_label")
 
     def _set_cam_state(self, state, text=""):
         self.cam_state = state
@@ -682,6 +930,9 @@ class OperatorApp:
             "idle": "",
         }
         self.cam_state_lbl.config(text=text or labels.get(state, ""))
+        colors = {"live": ACCENT, "connecting": AMBER, "lost": DENIED_INK}
+        self._set_chip(self.chip_camera, f"●  Celular · {labels.get(state) or 'sin conectar'}",
+                       colors.get(state, CHIP_IDLE))
         live = state in ("connecting", "live", "lost") and not self._stop.is_set()
         self.stop_btn.config(state=("normal" if live or self.capture is not None else "disabled"))
 
@@ -690,18 +941,77 @@ class OperatorApp:
         face_seen = bool(scene.get("regions"))
         view = decision_view(scene.get("outcome"), scene.get("reason"), scene.get("identity"),
                              self.labels, face_seen=face_seen)
-        self.decision_title.config(text=view["title"], fg=view["tone"])
+        outcome = scene.get("outcome")
+        if outcome == "GRANTED":
+            tone, icon, title = ACCENT, ICON_UNLOCK, "Acceso concedido"
+        elif outcome == "DENIED" and scene.get("reason") == "no_face":
+            tone, icon, title = WAIT_INK, ICON_LOCK, "Sin rostro"
+        elif outcome == "DENIED":
+            tone, icon, title = DENIED_INK, ICON_LOCK, "Acceso denegado"
+        elif outcome == "SIGNAL_LOST":
+            tone, icon, title = WAIT_INK, ICON_WARNING, "Señal perdida"
+        else:
+            tone, icon, title = WAIT_INK, ICON_LOCK, "En espera"
+        for widget in self._card_widgets:
+            widget.config(bg=tone)
+        self.decision_icon.config(text=icon)
+        self.decision_title.config(text=title, fg=SURFACE)
         regions = scene.get("regions") or []
         if len(regions) > 1:
-            identities = [
-                display_person(row.get("identity") or "UNKNOWN", self.labels)
-                for row in regions
-            ]
-            self.identity_lbl.config(text=f"Rostros ({len(regions)}): " + ", ".join(identities))
+            identities = [display_person(row.get("identity") or "UNKNOWN", self.labels)
+                          for row in regions]
+            self.identity_lbl.config(text=f"{len(regions)} rostros: " + ", ".join(identities))
         else:
-            self.identity_lbl.config(text=f"Identidad: {view['identity']}")
-        self.detail_lbl.config(text=view["detail"])
+            self.identity_lbl.config(text=view["identity"])
+        reason = SPANISH.get(scene.get("reason"), scene.get("reason") or "sin presentación")
+        if outcome == "DENIED" and scene.get("reason") == "unknown_identity" and face_seen:
+            reason = "rostro humano detectado, pero no coincide con ningún integrante"
+        elif outcome == "GRANTED" and len(regions) > 1:
+            reason = "al menos un integrante con permiso en la escena"
+        self.detail_lbl.config(text=f"Motivo: {reason}")
         self._refresh_tech()
+
+    def _refresh_live_panel(self):
+        """Racha de verificación, estado estimado del pestillo y recorrido del dato."""
+        now = monotonic()
+        streak = min(self._ui_streak, CONSENSUS_FRAMES)
+        width = max(self.streak_bar.winfo_width(), 2)
+        self.streak_bar.delete("all")
+        fill = ACCENT if streak >= CONSENSUS_FRAMES else ACCENT_SOFT
+        self.streak_bar.create_rectangle(0, 0, width * streak / CONSENSUS_FRAMES, 10,
+                                         fill=fill, outline="")
+        if streak >= CONSENSUS_FRAMES:
+            text = f"Identidad confirmada en {CONSENSUS_FRAMES} fotogramas seguidos"
+        elif streak:
+            text = f"Verificando identidad… {streak}/{CONSENSUS_FRAMES} fotogramas"
+        else:
+            text = f"Abre tras {CONSENSUS_FRAMES} fotogramas autorizados seguidos"
+        self.streak_lbl.config(text=text)
+        remaining = self._latch_open_until - now
+        if not self.actuate:
+            self.latch_icon.config(text=ICON_LOCK, fg=WAIT_INK)
+            self.latch_state_lbl.config(
+                text="Simulación\n" + ("abriría ahora" if streak >= CONSENSUS_FRAMES
+                                       else "no se envían órdenes"), fg=WAIT_INK)
+        elif remaining > 0:
+            self.latch_icon.config(text=ICON_UNLOCK, fg=ACCENT)
+            self.latch_state_lbl.config(
+                text=f"ABIERTO\ncierra en {remaining:.1f} s".replace(".", ","), fg=ACCENT)
+        else:
+            self.latch_icon.config(text=ICON_LOCK, fg=INK)
+            self.latch_state_lbl.config(text="CERRADO", fg=INK)
+        camera_ok = self.cam_state == "live"
+        states = {
+            "phone": camera_ok,
+            "detect": camera_ok and bool(self._scene.get("regions")),
+            "identify": camera_ok and bool(self._scene.get("regions")),
+            "decide": camera_ok and self._scene.get("outcome") == "GRANTED",
+            "esp32": self.actuate and remaining > 0,
+        }
+        for key, label in self.pipe_steps.items():
+            on = states.get(key, False)
+            label.config(bg=ACCENT if on else SURFACE, fg=SURFACE if on else WAIT_INK)
+
 
     def _refresh_tech(self):
         if self.tech_var.get():
@@ -1091,6 +1401,7 @@ class OperatorApp:
         if now - self._live_decision_at <= DECISION_TTL:
             return
         self._live_decision = False
+        self._ui_streak = 0
         self.gate.interrupt()
         self._refresh_rearm()
         scene = {
@@ -1135,6 +1446,7 @@ class OperatorApp:
             return
         self._drain_ui()
         self._tick_view()
+        self._refresh_live_panel()
         self._schedule_tick()
 
     def recognize_frame(self, frame):
@@ -1144,6 +1456,8 @@ class OperatorApp:
         simulate_authorize({
             key: scene[key] for key in ("outcome", "reason", "identity")
         } | {"event_id": scene.get("event_id")})
+        if source == "camera":
+            self._ui_streak = self._ui_streak + 1 if scene.get("outcome") == "GRANTED" else 0
         if may_send_physical(source, scene_kind(scene), self.gate, self.actuate):
             self._send_latch(scene)
         self._refresh_rearm()
@@ -1232,6 +1546,9 @@ class OperatorApp:
         try:
             result = send_decision(self.connection, event, scene["identity"], "GRANTED")
             self.ack_text = result["ack"]
+            self._latch_open_until = monotonic() + LATCH_HOLD_SECONDS
+            self.command_lbl.config(
+                text=f"Última etiqueta enviada: {result['command']}\nAcuse del ESP32: {result['ack']}")
             self.lock_text = ("abierto: se cierra 3 s después del último autorizado"
                               if result["pulse_confirmed"] else "simulación · posición no confirmada")
         except (OSError, RuntimeError, TimeoutError, ValueError) as error:
@@ -1242,32 +1559,39 @@ class OperatorApp:
     def _refresh_hw(self):
         port = self.port or "sin puerto"
         if self.latch_ok:
-            mode = "firmware LATCH listo; el vivo no confirma el movimiento físico"
+            self._set_chip(self.chip_latch, f"●  ESP32 {port}", ACCENT)
+        elif self.port:
+            self._set_chip(self.chip_latch, "●  ESP32 sin conexión", DENIED_INK)
         else:
-            mode = "simulación: no hay movimiento físico confirmado"
-        self.hw_lbl.config(
-            text=f"Puerto {port} · {mode}\nAcuse: {self.ack_text}\n{self.lock_text}")
+            self._set_chip(self.chip_latch, "●  ESP32 no usado", CHIP_IDLE)
+        self._set_chip(self.chip_mode, f"●  {self._mode_text()}", ACCENT if self.actuate else CHIP_IDLE)
+        mode = "firmware LATCH listo" if self.latch_ok else "simulación"
+        self.hw_lbl.config(text=f"Puerto {port} · {mode}\nAcuse: {self.ack_text}\n{self.lock_text}")
+
 
     def _record(self, scene, source):
         key = history_key(scene, source)
+        title = SPANISH.get(scene.get("outcome"), scene.get("outcome") or "estado")
+        who = display_person(scene.get("identity"), self.labels) if scene.get("identity") else "—"
+        origin = {"camera": "cámara", "operador": "operador"}.get(key[3], key[3])
+        color = {"GRANTED": ACCENT, "DENIED": DENIED_INK}.get(scene.get("outcome"), WAIT_INK)
         if key == self._hist_key:
             self._hist_count += 1
-            title = SPANISH.get(scene.get("outcome"), scene.get("outcome") or "estado")
-            who = display_person(scene.get("identity"), self.labels) if scene.get("identity") else "—"
-            line = f"{title} · {who} · {key[3]} ×{self._hist_count}"
+            line = f"{self._hist_time}  {title} · {who} · {origin} ×{self._hist_count}"
             if self.log.size():
                 self.log.delete(0)
             self.log.insert(0, line)
+            self.log.itemconfig(0, fg=color)
             if self.history:
                 self.history[-1] = line
             return
         self._hist_key = key
         self._hist_count = 1
-        title = SPANISH.get(scene.get("outcome"), scene.get("outcome") or "estado")
-        who = display_person(scene.get("identity"), self.labels) if scene.get("identity") else "—"
-        line = f"{title} · {who} · {key[3]}"
+        self._hist_time = datetime.now().strftime("%H:%M:%S")
+        line = f"{self._hist_time}  {title} · {who} · {origin}"
         self.history.append(line)
         self.log.insert(0, line)
+        self.log.itemconfig(0, fg=color)
         self.history = self.history[-HISTORY_LIMIT:]
         while self.log.size() > HISTORY_LIMIT:
             self.log.delete(HISTORY_LIMIT, tk.END)

@@ -67,7 +67,8 @@ def identify_knn(gallery, labels, max_distance=None, min_gap=0.):
             score += f" G={min_gap:.3f}"
             if gap is not None:
                 score += f" g={gap:.3f}"
-        return label, accepted, score
+        # Cifras para la interfaz: confianza visual = cuánto margen queda bajo el umbral T.
+        return label, accepted, score, {"distance": distance, "max_distance": max_distance}
     return identify
 
 
@@ -90,7 +91,7 @@ def recognize_crop(crop, human_model, identify, permissions, *,
         return decide(face_count=1, candidate=None, accepted=False, permission_active=False)
     cnn_human, _mark = cnn_mark(human_model, crop)
     is_human = True if trust_detector else cnn_human
-    label, accepted, score_text = identify(vector)
+    label, accepted, score_text, *extra = identify(vector)
     candidate = label if accepted and label in PEOPLE else None
     row = decide(
         face_count=1,
@@ -101,6 +102,9 @@ def recognize_crop(crop, human_model, identify, permissions, *,
     )
     row["nearest"] = label
     row["score_text"] = score_text
+    row["human"] = bool(cnn_human)
+    if extra:
+        row.update(extra[0])
     row["model"] = backend
     row["overlay"] = overlay_text(row, label, score_text, cnn_human, backend)
     return row

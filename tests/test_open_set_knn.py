@@ -19,7 +19,7 @@ def test_gap_rejects_ambiguous_neighbour():
     assert accepts_open_set("K01", 0.02, 0.5, max_distance=1.0, min_gap=0.2)
     assert not accepts_open_set("K01", 0.02, 0.01, max_distance=1.0, min_gap=0.2)
     identify = identify_knn(gallery, labels, max_distance=1.0, min_gap=0.5)
-    _label, accepted, text = identify(query)
+    _label, accepted, text, _ = identify(query)
     assert accepted is False and "G=" in text
 
 

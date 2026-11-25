@@ -168,7 +168,7 @@ def test_model_selection_clears_previous_result_and_shows_trial(tmp_path):
         app._select_model()
         assert app.trial_info["label"] == chosen
         assert "SFace (comparación)" in app.model_banner.cget("text")
-        assert app.decision_title.cget("text") == "Espera"
+        assert app.decision_title.cget("text") == "En espera"
     finally:
         app.window.destroy()
 
@@ -177,8 +177,8 @@ def test_initial_layout_placeholder_and_simulation_badge(app):
     app.window.geometry("1366x768")
     app.window.update_idletasks()
     labels = _texts(app.window)
-    assert app.decision_title.cget("text") == "Espera"
-    assert "FaceNexus" in labels and "Simulación" in labels
+    assert app.decision_title.cget("text") == "En espera"
+    assert "FaceNexus" in labels and any("Simulación" in text for text in labels)
     hint = app.viewer.find_withtag("hint")
     assert hint
     assert "Abre una imagen" in app.viewer.itemcget(hint[0], "text")
@@ -203,7 +203,7 @@ def test_apply_image_and_permission_toggle(tmp_path):
     scene = granted.apply_path(image)
     granted.window.update_idletasks()
     assert scene["outcome"] == "GRANTED"
-    assert granted.decision_title.cget("text") == "Autorizado"
+    assert granted.decision_title.cget("text") == "Acceso concedido"
     assert "K01 · Alpha" in granted.identity_lbl.cget("text")
     assert granted.log.size() == 1
     granted.perm_vars["K01"].set(False)
@@ -273,7 +273,7 @@ def test_camera_fault_after_granted_clears_authorization(tmp_path):
     app.window.update_idletasks()
     app.capture = ScriptedCapture([_blank()])
     app._ingest_camera()
-    assert app.decision_title.cget("text") == "Autorizado"
+    assert app.decision_title.cget("text") == "Acceso concedido"
     app.gate.can_send = False
     app._refresh_rearm()
     app.capture = ScriptedCapture([None])
@@ -285,7 +285,7 @@ def test_camera_fault_after_granted_clears_authorization(tmp_path):
     app._core = fake_recognize("GRANTED", "authorized", "K01")
     app.capture = ScriptedCapture([_blank()])
     app._ingest_camera()
-    assert app.decision_title.cget("text") == "Autorizado"
+    assert app.decision_title.cget("text") == "Acceso concedido"
     assert not app.viewer.find_withtag("stale")
     app.window.destroy()
 
@@ -300,14 +300,14 @@ def test_live_camera_does_not_replace_open_file(tmp_path):
     cv2.imwrite(str(image), _blank())
     app.apply_path(image)
     assert app.hold_file is True
-    assert app.decision_title.cget("text") == "Autorizado"
+    assert app.decision_title.cget("text") == "Acceso concedido"
     app._core = fake_recognize("DENIED", "unknown_identity", "UNKNOWN")
     app.capture = ScriptedCapture([_blank(), None])
     app._ingest_camera()
-    assert app.decision_title.cget("text") == "Autorizado"
+    assert app.decision_title.cget("text") == "Acceso concedido"
     assert "K01 · Alpha" in app.identity_lbl.cget("text")
     app._ingest_camera()
-    assert app.decision_title.cget("text") == "Autorizado"
+    assert app.decision_title.cget("text") == "Acceso concedido"
     app.hold_file = False
     app._ingest_camera()
     app.window.destroy()
@@ -363,7 +363,7 @@ def test_rejected_face_shows_unconfirmed_identity_and_diagnostic(tmp_path):
     app.window.withdraw()
     app.window.update_idletasks()
     app._apply(_blank(), source="file")
-    assert "Rostro detectado" in app.detail_lbl.cget("text")
+    assert "rostro humano detectado" in app.detail_lbl.cget("text")
     assert app.identity_lbl.cget("text").endswith("Desconocido")
     app.tech_var.set(True)
     app._refresh_tech()
@@ -381,7 +381,7 @@ def test_stop_after_granted_invalidates_camera_decision(tmp_path):
     app.window.update_idletasks()
     app.capture = ScriptedCapture([_blank()])
     app._ingest_camera()
-    assert app.decision_title.cget("text") == "Autorizado"
+    assert app.decision_title.cget("text") == "Acceso concedido"
     app._stop_camera()
     assert app.decision_title.cget("text") == "Señal perdida"
     assert app.capture is None
@@ -399,7 +399,7 @@ def test_file_prediction_survives_signal_lost(tmp_path):
     app.apply_path(image)
     app.capture = ScriptedCapture([None])
     app._ingest_camera()
-    assert app.decision_title.cget("text") == "Autorizado"
+    assert app.decision_title.cget("text") == "Acceso concedido"
     assert app.viewer.find_withtag("file")
     assert app.cam_state == "lost"
     app.window.destroy()
@@ -497,7 +497,7 @@ def test_fresh_result_publishes_when_view_has_moved_ahead(tmp_path):
     app._preview_slot.put({"kind": "frame", "seq": 8, "bgr": frame, "at": now})
     app._result_slot.put(_result(3, 2, frame, _granted_scene(), now))
     app._tick_view()
-    assert app.decision_title.cget("text") == "Autorizado"
+    assert app.decision_title.cget("text") == "Acceso concedido"
     assert app._published_seq == 3
     assert app._view_seq == 8
     assert app.viewer.find_withtag("box")
@@ -529,9 +529,11 @@ def test_live_view_labels_each_face_independently(app):
         app.viewer.itemcget(item, "text")
         for item in app.viewer.find_withtag("face_label") if app.viewer.type(item) == "text"
     ]
-    assert labels == ["K01 · Alpha", "Desconocido"]
+    # Cada etiqueta tiene tres líneas: nombre, estado y rostro humano confirmado por YuNet.
+    assert labels[0::3] == ["K01 · Alpha", "Desconocido"]
+    assert labels[1].startswith("Autorizado") and labels[4].startswith("Desconocido")
     assert "K01 · Alpha, Desconocido" in app.identity_lbl.cget("text")
-    assert app.decision_title.cget("text") == "Autorizado"
+    assert app.decision_title.cget("text") == "Acceso concedido"
     app.tech_var.set(True)
     app._refresh_tech()
     assert "d=0.600" in app.tech_lbl.cget("text")
@@ -555,7 +557,7 @@ def test_overlay_expires_and_stop_discards_it(tmp_path):
     app._overlay["until"] = monotonic() - 0.01
     app._tick_view()
     assert not app.viewer.find_withtag("box")
-    assert app.decision_title.cget("text") == "Autorizado"
+    assert app.decision_title.cget("text") == "Acceso concedido"
     app._published_seq = 0
     app._result_slot.put(_result(2, 1, frame, _granted_scene(), monotonic()))
     app._preview_slot.put({"kind": "frame", "seq": 2, "bgr": frame, "at": monotonic()})
@@ -578,16 +580,16 @@ def test_authorized_expires_while_video_keeps_arriving(tmp_path):
     app._preview_slot.put({"kind": "frame", "seq": 1, "bgr": frame, "at": now})
     app._result_slot.put(_result(1, 1, frame, _granted_scene(), now))
     app._tick_view()
-    assert app.decision_title.cget("text") == "Autorizado"
+    assert app.decision_title.cget("text") == "Acceso concedido"
     app._overlay["until"] = monotonic() - 0.01
     app._preview_slot.put({"kind": "frame", "seq": 2, "bgr": frame, "at": monotonic()})
     app._tick_view()
-    assert app.decision_title.cget("text") == "Autorizado"
+    assert app.decision_title.cget("text") == "Acceso concedido"
     assert not app.viewer.find_withtag("box")
     app._live_decision_at = monotonic() - 1.1
     app._preview_slot.put({"kind": "frame", "seq": 3, "bgr": frame, "at": monotonic()})
     app._tick_view()
-    assert app.decision_title.cget("text") == "Espera"
+    assert app.decision_title.cget("text") == "En espera"
     assert "medición reciente" in app.detail_lbl.cget("text")
     app.window.destroy()
 
@@ -603,10 +605,10 @@ def test_late_publish_does_not_extend_authorized_ttl(tmp_path):
     app._preview_slot.put({"kind": "frame", "seq": 1, "bgr": frame, "at": captured})
     app._result_slot.put(_result(1, 1, frame, _granted_scene(), captured))
     app._tick_view()
-    assert app.decision_title.cget("text") == "Autorizado"
+    assert app.decision_title.cget("text") == "Acceso concedido"
     assert app._live_decision_at == captured
     app._expire_live_decision(captured + 1.01)
-    assert app.decision_title.cget("text") == "Espera"
+    assert app.decision_title.cget("text") == "En espera"
     app.window.destroy()
 
 

@@ -63,5 +63,5 @@ def test_knn_vote_follows_nearest_labelled_neighbours():
     other, _ = vote_knn(gallery, labels, np.array([0., 1., 0.], np.float32), k=3)
     assert other == "OTHER"
     identify = identify_knn(gallery, labels)
-    chosen, accepted, text = identify(np.array([1., 0., 0.], np.float32))
+    chosen, accepted, text, _ = identify(np.array([1., 0., 0.], np.float32))
     assert chosen == "K01" and accepted and text.startswith("d=")

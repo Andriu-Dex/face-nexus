@@ -37,7 +37,7 @@ def test_verified_pair_and_failures(tmp_path):
     identify = identify_knn(bundle["vectors"], bundle["labels"], bundle["max_distance"])
     far = np.ones(FEATURE_COUNT, np.float32)
     far /= np.linalg.norm(far)
-    _label, accepted, _ = identify(far)
+    _label, accepted, *_ = identify(far)
     assert accepted is False
 
     other = tmp_path / "other"
