@@ -47,7 +47,6 @@ ACCENT_SOFT = "#4FB3A9"
 CHIP_IDLE = "#3A4F61"
 SURFACE_ALT = "#F4F7FA"
 TRACK = "#E3EAF0"
-TRACK_DARK = "#2C4254"
 TAG_BG = "#0F2233"
 AMBER = "#C98A16"
 REJECT = "#D9475B"
@@ -363,15 +362,6 @@ def viewer_layout(frame, canvas_w, canvas_h):
     return shown, origin_x, origin_y, shown_w, shown_h
 
 
-def match_strength(distance, max_distance):
-    """0–1 para la barra de la etiqueta: 1 si d ≤ T/2, 0 si d ≥ T. Solo es visual."""
-    if not isinstance(distance, (int, float)) or not isinstance(max_distance, (int, float)):
-        return None
-    if max_distance <= 0:
-        return None
-    return float(min(1., max(0., (max_distance - distance) / (max_distance / 2))))
-
-
 def face_style(item):
     """Color y texto por rostro: autorizado, permiso revocado o desconocido."""
     if item.get("granted"):
@@ -392,8 +382,6 @@ def overlay_boxes(scene):
                 "identity": row.get("identity") or "UNKNOWN",
                 "reason": row.get("reason"),
                 "human": row.get("human", True),
-                "distance": row.get("distance"),
-                "max_distance": row.get("max_distance"),
             })
     return boxes
 
@@ -869,13 +857,10 @@ class OperatorApp:
             color, status = face_style(item)
             self._draw_brackets(x0, y0, x1, y1, color)
             name = display_person(item["identity"], self.labels)
-            match = match_strength(item.get("distance"), item.get("max_distance"))
-            lines = [(name, self._font(11, bold=True))]
-            detail = status if match is None else f"{status} · coincidencia {match:.0%}"
-            lines.append((detail, self._font(9)))
-            # YuNet es quien confirma el rostro humano en vivo; la CNN binaria va al detalle técnico.
-            lines.append(("Rostro humano (YuNet)", self._font(8)))
-            self._draw_tag(x0, y0, x1, lines, color, match)
+            lines = [(name, self._font(11, bold=True)), (status, self._font(9)),
+                     # YuNet confirma el rostro humano en vivo; la CNN binaria va al detalle técnico.
+                     ("Rostro humano (YuNet)", self._font(8))]
+            self._draw_tag(x0, y0, x1, lines, color)
 
     def _draw_brackets(self, x0, y0, x1, y1, color):
         """Esquinas marcadas y un contorno fino: se ve el rostro sin taparlo."""
@@ -887,8 +872,8 @@ class OperatorApp:
             self.viewer.create_line(cx, cy, cx, cy + dy * size, fill=color, width=5,
                                     capstyle="round", tags="box")
 
-    def _draw_tag(self, x0, y0, x1, lines, color, match):
-        """Etiqueta sobre el recuadro: nombre, estado, CNN humano y barra de coincidencia."""
+    def _draw_tag(self, x0, y0, x1, lines, color):
+        """Etiqueta sobre el recuadro: nombre, estado y confirmación de rostro humano."""
         pad, gap = 10, 2
         widths, heights = [], []
         for text, font in lines:
@@ -897,9 +882,8 @@ class OperatorApp:
             self.viewer.delete(probe)
             widths.append(bx1 - bx0)
             heights.append(by1 - by0)
-        bar_h = 6 if match is not None else 0
         width = max(max(widths) + 2 * pad, x1 - x0)
-        height = sum(heights) + gap * (len(lines) - 1) + 2 * pad + (bar_h + 6 if bar_h else 0)
+        height = sum(heights) + gap * (len(lines) - 1) + 2 * pad
         top = y0 - height - 6
         if top < 4:
             top = y0 + 6
@@ -912,13 +896,6 @@ class OperatorApp:
             self.viewer.create_text(x0 + pad + 4, y, text=text, font=font, fill=tone,
                                     anchor="nw", tags="face_label")
             y += line_h + gap
-        if bar_h:
-            track_x0, track_x1 = x0 + pad + 4, x0 + width - pad
-            self.viewer.create_rectangle(track_x0, y + 4, track_x1, y + 4 + bar_h, fill=TRACK_DARK,
-                                         outline="", tags="face_label")
-            self.viewer.create_rectangle(track_x0, y + 4,
-                                         track_x0 + (track_x1 - track_x0) * match,
-                                         y + 4 + bar_h, fill=color, outline="", tags="face_label")
 
     def _set_cam_state(self, state, text=""):
         self.cam_state = state
