@@ -44,7 +44,8 @@ def test_fault_blocks_until_operator_rearms():
     gate.note_fault()
     assert gate.on_frame(AUTHORIZED, now=5.0) is False
     gate.rearm()
-    assert gate.on_frame(AUTHORIZED, now=5.0) is True  # la racha siguió contando
+    consensus(gate, now=6.0)  # tras una falla se exige una racha nueva
+    assert gate.on_frame(AUTHORIZED, now=6.0) is True
 
 
 def test_scene_kind_splits_empty_from_uncertain():

@@ -34,6 +34,7 @@ class PresentationGate:
         """El operador confirma que la falla del pestillo quedó resuelta."""
         self.can_send = True
         self.last_sent = None
+        self.streak = 0
 
     def interrupt(self):
         """La autorización se perdió (sin rostro, señal perdida, caducidad): exige una racha nueva.
