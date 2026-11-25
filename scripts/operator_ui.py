@@ -1108,6 +1108,9 @@ class OperatorApp:
 
         tk.Button(dialog, text="Conectar", command=connect, bg=ACCENT, fg=SURFACE,
                   font=self._font(10, bold=True), relief="flat", padx=12, pady=6).pack(pady=(0, 16))
+        dialog.bind("<Return>", lambda _event: connect())
+        dialog.bind("<KP_Enter>", lambda _event: connect())
+        dialog.bind("<Escape>", lambda _event: dialog.destroy())
         entry.focus_set()
 
     def _ui(self, fn):
