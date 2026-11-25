@@ -38,6 +38,22 @@ def describe_face_cnn(crop, net):
     return vector / norm
 
 
+def fuse_vectors(cnn, sface, weight):
+    """[√w · CNN, √(1−w) · SFace]: distancia² = w·d²_CNN + (1−w)·d²_SFace; norma 1."""
+    return np.concatenate((np.sqrt(weight) * cnn, np.sqrt(1 - weight) * sface), axis=-1)
+
+
+def describe_fusion(frame, detection, net, aligner, weight):
+    """CNN propia sobre la caja YuNet + SFace sobre el rostro alineado, como apoyo."""
+    left, top, right, bottom, *_ = detection
+    cnn = describe_face_cnn(frame[top:bottom, left:right], net)
+    aligned = align_detected_face(frame, detection, aligner)
+    sface = None if aligned is None else describe_sface(aligned, aligner)
+    if cnn is None or sface is None:
+        return None
+    return fuse_vectors(cnn, sface, weight)
+
+
 def describe_sface(crop, extractor):
     vector = extractor.feature(crop).reshape(-1)
     norm = np.linalg.norm(vector)

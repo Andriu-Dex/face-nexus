@@ -14,7 +14,7 @@ from scripts.calibrate_hog import ROTATE
 from scripts.capture_phone_train import WINDOW, show
 from scripts.compare_identity_k01 import vote_knn
 from scripts.hog_knn import (
-    PEOPLE, accepts_open_set, align_detected_face, describe_face, describe_face_cnn, describe_sface,
+    PEOPLE, accepts_open_set, align_detected_face, describe_face, describe_face_cnn, describe_fusion, describe_sface,
     detect_faces, runner_up_distance,
 )
 from scripts.identity_artifacts import load_verified_knn
@@ -113,6 +113,13 @@ def face_descriptor(info, aligner):
     if info.get("preprocessing") == "face_cnn":
         net = cv2.dnn.readNetFromONNX(str(info["face_cnn_path"]))
         return lambda crop: describe_face_cnn(crop, net)
+    if info.get("preprocessing") == "fusion":
+        net = cv2.dnn.readNetFromONNX(str(info["face_cnn_path"]))
+        weight = info["cnn_weight"]
+        # Necesita la caja (CNN) y los landmarks (SFace): recibe fotograma y detección.
+        describe = lambda frame, detection: describe_fusion(frame, detection, net, aligner, weight)
+        describe.takes_detection = True
+        return describe
     return describe_face
 
 
@@ -139,9 +146,12 @@ def recognize_frame(frame, detector, human_model, identify, permissions, backend
             row = decide(face_count=1, candidate=None, accepted=False, permission_active=False,
                          model_ready=model_ready)
         else:
+            describe_region = describe
+            if getattr(describe, "takes_detection", False):
+                describe_region = lambda _crop, d=detection: describe(frame, d)
             row = recognize_crop(crop, human_model, identify, permissions,
                                  trust_detector=True, backend=backend, model_ready=model_ready,
-                                 describe=describe)
+                                 describe=describe_region)
         row["box"] = [left, top, right, bottom]
         regions.append(row)
     scene = decide_scene([{key: row[key] for key in ("outcome", "reason", "identity")}
@@ -248,6 +258,7 @@ def resolve_knn_trial(vault, trial=FOUR_RUN):
         "min_gap": float(bundle.get("min_gap") or 0.),
         "preprocessing": bundle["preprocessing"],
         "face_cnn_path": bundle.get("face_cnn_path"),
+        "cnn_weight": bundle.get("cnn_weight"),
         "reason": None,
     }
     return folder, bundle, info
@@ -300,7 +311,7 @@ def main():
             f"T={info.get('max_distance')} G={info.get('min_gap')}",
             flush=True,
         )
-    if info.get("preprocessing") in ("aligned_hog", "sface"):
+    if info.get("preprocessing") in ("aligned_hog", "sface", "fusion"):
         detector, aligner = load_models(args.models)
     else:
         detector, aligner = load_detector(args.models), None

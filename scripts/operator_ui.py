@@ -1288,7 +1288,7 @@ def trial_banner(info):
 def build_recognizer(vault, models, trial="identity_four_v2"):
     human = load_keras(Path(vault) / "experiments" / "human_cnn" / HUMAN_RUN / "model.keras")
     identify, model_ready, reason, info = build_identify(vault, "knn", 0., trial=trial)
-    if info.get("preprocessing") in ("aligned_hog", "sface"):
+    if info.get("preprocessing") in ("aligned_hog", "sface", "fusion"):
         detector, aligner = load_models(models)
     else:
         detector, aligner = load_detector(models), None

@@ -42,7 +42,7 @@ def read_threshold_record(path):
     if not np.isfinite(gap) or gap < 0:
         raise ValueError("Holgura entre identidades inválida.")
     preprocessing = payload.get("preprocessing", "box_hog")
-    if preprocessing not in ("box_hog", "aligned_hog", "sface", "face_cnn"):
+    if preprocessing not in ("box_hog", "aligned_hog", "sface", "face_cnn", "fusion"):
         raise ValueError("Preprocesamiento de galería desconocido.")
     return value, digest.lower(), gap, preprocessing
 
@@ -92,18 +92,25 @@ def load_verified_knn(folder):
         if digest != expected:
             return None, "model_unavailable"
         feature_count = SFACE_FEATURE_COUNT if preprocessing in EMBEDDING_PREPROCESSING else FEATURE_COUNT
+        if preprocessing == "fusion":
+            feature_count = 2 * SFACE_FEATURE_COUNT
         vectors, labels = load_gallery(gallery_path, feature_count)
         cnn_path = None
-        if preprocessing == "face_cnn":
+        cnn_weight = None
+        if preprocessing in ("face_cnn", "fusion"):
             # Galería y red van juntas: con otros pesos los vectores no serían comparables.
             cnn_path = folder / FACE_CNN_NAME
             record = json.loads(distance_path.read_text(encoding="utf-8-sig"))
             if file_digest(cnn_path) != record.get("face_cnn_sha256"):
                 return None, "model_unavailable"
+            if preprocessing == "fusion":
+                cnn_weight = record.get("cnn_weight")
+                if type(cnn_weight) is not float or not 0 < cnn_weight < 1:
+                    return None, "model_unavailable"
     except (OSError, ValueError, KeyError, TypeError, json.JSONDecodeError, zipfile.BadZipFile):
         return None, "model_unavailable"
     if not _gallery_usable(vectors, labels, feature_count):
         return None, "model_unavailable"
     return {"vectors": vectors, "labels": labels, "max_distance": threshold,
             "min_gap": min_gap, "gallery_sha256": digest, "preprocessing": preprocessing,
-            "face_cnn_path": cnn_path}, None
+            "face_cnn_path": cnn_path, "cnn_weight": cnn_weight}, None

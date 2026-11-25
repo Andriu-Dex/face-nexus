@@ -10,6 +10,9 @@ AUTHORIZED = "authorized"
 EMPTY = "empty"
 UNCERTAIN = "uncertain"
 HEARTBEAT_SECONDS = 0.5
+# Fotogramas autorizados seguidos antes de abrir (~0,6 s a 13 fps). Un desconocido parecido
+# a un integrante suele parpadear entre Autorizado y Desconocido; un integrante real no.
+CONSENSUS_FRAMES = 8
 
 
 def scene_kind(scene):
@@ -25,6 +28,7 @@ class PresentationGate:
     def __init__(self):
         self.can_send = True
         self.last_sent = None
+        self.streak = 0
 
     def rearm(self):
         """El operador confirma que la falla del pestillo quedó resuelta."""
@@ -42,7 +46,8 @@ class PresentationGate:
 
         Un fotograma sin autorizado no envía nada: el silencio basta para que el ESP32 cierre.
         """
-        if kind != AUTHORIZED or not self.can_send:
+        self.streak = self.streak + 1 if kind == AUTHORIZED else 0
+        if self.streak < CONSENSUS_FRAMES or not self.can_send:
             return False
         now = monotonic() if now is None else now
         if self.last_sent is not None and now - self.last_sent < HEARTBEAT_SECONDS:
