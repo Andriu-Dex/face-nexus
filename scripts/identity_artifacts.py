@@ -13,6 +13,8 @@ from scripts.evaluate_hog_knn import K
 from scripts.hog_knn import FEATURE_COUNT, PEOPLE, SFACE_FEATURE_COUNT
 
 DISTANCE_NAME = "knn_max_distance.json"
+FACE_CNN_NAME = "face_cnn.onnx"
+EMBEDDING_PREPROCESSING = ("sface", "face_cnn")
 HEX64 = re.compile(r"^[0-9a-f]{64}$")
 
 
@@ -40,7 +42,7 @@ def read_threshold_record(path):
     if not np.isfinite(gap) or gap < 0:
         raise ValueError("Holgura entre identidades inválida.")
     preprocessing = payload.get("preprocessing", "box_hog")
-    if preprocessing not in ("box_hog", "aligned_hog", "sface"):
+    if preprocessing not in ("box_hog", "aligned_hog", "sface", "face_cnn"):
         raise ValueError("Preprocesamiento de galería desconocido.")
     return value, digest.lower(), gap, preprocessing
 
@@ -89,11 +91,19 @@ def load_verified_knn(folder):
         digest = file_digest(gallery_path)
         if digest != expected:
             return None, "model_unavailable"
-        feature_count = SFACE_FEATURE_COUNT if preprocessing == "sface" else FEATURE_COUNT
+        feature_count = SFACE_FEATURE_COUNT if preprocessing in EMBEDDING_PREPROCESSING else FEATURE_COUNT
         vectors, labels = load_gallery(gallery_path, feature_count)
+        cnn_path = None
+        if preprocessing == "face_cnn":
+            # Galería y red van juntas: con otros pesos los vectores no serían comparables.
+            cnn_path = folder / FACE_CNN_NAME
+            record = json.loads(distance_path.read_text(encoding="utf-8-sig"))
+            if file_digest(cnn_path) != record.get("face_cnn_sha256"):
+                return None, "model_unavailable"
     except (OSError, ValueError, KeyError, TypeError, json.JSONDecodeError, zipfile.BadZipFile):
         return None, "model_unavailable"
     if not _gallery_usable(vectors, labels, feature_count):
         return None, "model_unavailable"
     return {"vectors": vectors, "labels": labels, "max_distance": threshold,
-            "min_gap": min_gap, "gallery_sha256": digest, "preprocessing": preprocessing}, None
+            "min_gap": min_gap, "gallery_sha256": digest, "preprocessing": preprocessing,
+            "face_cnn_path": cnn_path}, None

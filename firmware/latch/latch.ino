@@ -4,9 +4,15 @@
 constexpr unsigned long BAUD_RATE = 115200;
 constexpr int SERVO_PIN = 25;
 constexpr int SERVO_CHANNEL = 0;
-constexpr int CLOSED_DEG = 20;
-constexpr int OPEN_DEG = 90;
-constexpr unsigned long HOLD_MS = 1500;
+constexpr int CLOSED_DEG = 100;
+constexpr int OPEN_DEG = 0;
+// Recorrido físico del SG90 para la prueba manual SERVO MOVE.
+constexpr int MIN_DEG = 0;
+constexpr int MAX_DEG = 180;
+// Si no llega otro GRANTED en este lapso, el propio ESP32 cierra (falla en modo cerrado).
+constexpr unsigned long HOLD_MS = 3000;
+bool isOpen = false;
+unsigned long lastGrantMs = 0;
 char line[80];
 size_t used = 0;
 bool overflow = false;
@@ -22,10 +28,19 @@ void writeAngle(int degrees) {
     ledcWrite(SERVO_CHANNEL, duty);
 }
 
-void pulseOpen() {
-    writeAngle(OPEN_DEG);
-    delay(HOLD_MS);
-    writeAngle(CLOSED_DEG);
+void openOrRenew() {
+    if (!isOpen) {
+        writeAngle(OPEN_DEG);
+        isOpen = true;
+    }
+    lastGrantMs = millis();
+}
+
+void closeIfExpired() {
+    if (isOpen && millis() - lastGrantMs >= HOLD_MS) {
+        writeAngle(CLOSED_DEG);
+        isOpen = false;
+    }
 }
 
 void handleLine(char* input) {
@@ -35,7 +50,7 @@ void handleLine(char* input) {
     }
 
     if (strcmp(input, "SERVO RANGE") == 0) {
-        Serial.printf("SERVO RANGE %d %d\n", CLOSED_DEG, OPEN_DEG);
+        Serial.printf("SERVO RANGE %d %d\n", MIN_DEG, MAX_DEG);
         return;
     }
 
@@ -47,10 +62,11 @@ void handleLine(char* input) {
             return;
         }
         const int degrees = atoi(angle);
-        if (degrees < CLOSED_DEG || degrees > OPEN_DEG) {
+        if (degrees < MIN_DEG || degrees > MAX_DEG) {
             Serial.println("ERROR BAD_ANGLE");
             return;
         }
+        isOpen = false;
         writeAngle(degrees);
         Serial.printf("SERVO ACK %d\n", degrees);
         return;
@@ -81,7 +97,7 @@ void handleLine(char* input) {
     }
 
     if (granted) {
-        pulseOpen();
+        openOrRenew();
         Serial.printf("ACK %s %s %s ACTUATED\n", event, identity, decision);
         return;
     }
@@ -97,6 +113,7 @@ void setup() {
 }
 
 void loop() {
+    closeIfExpired();
     while (Serial.available()) {
         char byte = static_cast<char>(Serial.read());
         if (byte == '\n') {

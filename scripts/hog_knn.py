@@ -13,13 +13,29 @@ SFACE_FEATURE_COUNT = 128
 PEOPLE = ("K01", "K02", "K03", "K04")
 
 
-def describe_face(crop):
-    """Ecualiza en gris y resume las orientaciones de bordes del recorte."""
+def face_grey(crop):
+    """Recorte BGR → gris 64×64 ecualizado. Lo comparten HOG y la CNN facial."""
     grey = cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY)
     grey = cv2.resize(grey, FACE_SIZE, interpolation=cv2.INTER_AREA)
-    vector = HOG.compute(cv2.equalizeHist(grey)).reshape(-1)
+    return cv2.equalizeHist(grey)
+
+
+def describe_face(crop):
+    """Ecualiza en gris y resume las orientaciones de bordes del recorte."""
+    vector = HOG.compute(face_grey(crop)).reshape(-1)
     norm = float(np.linalg.norm(vector))
     return vector / norm if norm > 0 and np.isfinite(norm) else None
+
+
+def describe_face_cnn(crop, net):
+    """Vector de 128 de la CNN propia (ONNX en OpenCV), con la misma entrada gris que HOG."""
+    x = face_grey(crop).astype(np.float32) / 127.5 - 1
+    net.setInput(x[None, None])
+    vector = net.forward().reshape(-1)
+    norm = float(np.linalg.norm(vector))
+    if vector.size != SFACE_FEATURE_COUNT or not np.isfinite(norm) or norm <= 0:
+        return None
+    return vector / norm
 
 
 def describe_sface(crop, extractor):

@@ -18,7 +18,7 @@ if not exist "%VAULT%\" (
 )
 
 cd /d "%ROOT%"
-"%PY%" -m scripts.operator_ui --vault "%VAULT%"
+"%PY%" -m scripts.operator_ui --vault "%VAULT%" %*
 set "ERR=%ERRORLEVEL%"
 if not "%ERR%"=="0" (
     echo FaceNexus termino con error %ERR%.

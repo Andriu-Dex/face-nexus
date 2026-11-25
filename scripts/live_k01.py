@@ -14,7 +14,8 @@ from scripts.calibrate_hog import ROTATE
 from scripts.capture_phone_train import WINDOW, show
 from scripts.compare_identity_k01 import vote_knn
 from scripts.hog_knn import (
-    PEOPLE, accepts_open_set, align_detected_face, describe_face, describe_sface, detect_faces, runner_up_distance,
+    PEOPLE, accepts_open_set, align_detected_face, describe_face, describe_face_cnn, describe_sface,
+    detect_faces, runner_up_distance,
 )
 from scripts.identity_artifacts import load_verified_knn
 from scripts.dataset_capture import verify_vault
@@ -109,6 +110,9 @@ def face_descriptor(info, aligner):
     """Elige la misma representación utilizada para construir la galería."""
     if info.get("preprocessing") == "sface":
         return lambda crop: describe_sface(crop, aligner)
+    if info.get("preprocessing") == "face_cnn":
+        net = cv2.dnn.readNetFromONNX(str(info["face_cnn_path"]))
+        return lambda crop: describe_face_cnn(crop, net)
     return describe_face
 
 
@@ -243,6 +247,7 @@ def resolve_knn_trial(vault, trial=FOUR_RUN):
         "max_distance": float(bundle["max_distance"]),
         "min_gap": float(bundle.get("min_gap") or 0.),
         "preprocessing": bundle["preprocessing"],
+        "face_cnn_path": bundle.get("face_cnn_path"),
         "reason": None,
     }
     return folder, bundle, info

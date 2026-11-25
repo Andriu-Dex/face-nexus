@@ -11,9 +11,11 @@ from sklearn.datasets import fetch_lfw_people
 from scripts.capture_manifest import child, write_synced
 from scripts.capture_phone_train import sample_phone_frames
 from scripts.face_pipeline import load_models
-from scripts.hog_knn import PEOPLE, align_detected_face, describe_face, describe_sface, detect_faces
+from scripts.hog_knn import (
+    PEOPLE, align_detected_face, describe_face, describe_face_cnn, describe_sface, detect_faces,
+)
 from scripts.compare_identity_k01 import write_gallery
-from scripts.identity_artifacts import DISTANCE_NAME
+from scripts.identity_artifacts import DISTANCE_NAME, FACE_CNN_NAME, file_digest
 from scripts.human_cnn import split_by_identity
 from scripts.identity_k01 import to_bgr
 from scripts.import_frames import spread_indices
@@ -24,7 +26,7 @@ from scripts.open_set_knn import (
 from scripts.dataset_capture import verify_vault
 
 
-def paired_features(frame, detector, aligner, *, include_sface=False):
+def paired_features(frame, detector, aligner, *, include_sface=False, cnn=None):
     faces = detect_faces(frame, detector)
     if len(faces) != 1:
         return None
@@ -36,18 +38,21 @@ def paired_features(frame, detector, aligner, *, include_sface=False):
     aligned = describe_face(normalized)
     if cropped is None or aligned is None:
         return None
+    columns = [cropped, aligned]
     if include_sface:
-        embedding = describe_sface(normalized, aligner)
-        if embedding is None:
-            return None
-        return cropped, aligned, embedding
-    return cropped, aligned
+        columns.append(describe_sface(normalized, aligner))
+    if cnn is not None:
+        # Misma caja YuNet sin alinear que HOG y que el vivo.
+        columns.append(describe_face_cnn(frame[top:bottom, left:right], cnn))
+    if any(column is None for column in columns):
+        return None
+    return tuple(columns)
 
 
-def collect(frames, detector, aligner, *, include_sface=False):
+def collect(frames, detector, aligner, *, include_sface=False, cnn=None):
     pairs = []
     for frame in frames:
-        pair = paired_features(frame, detector, aligner, include_sface=include_sface)
+        pair = paired_features(frame, detector, aligner, include_sface=include_sface, cnn=cnn)
         if pair is not None:
             pairs.append(pair)
     if not pairs:
@@ -55,9 +60,9 @@ def collect(frames, detector, aligner, *, include_sface=False):
     return tuple(np.stack(columns) for columns in zip(*pairs, strict=True))
 
 
-def phone_data(directories, count, detector, aligner, *, include_sface=False):
+def phone_data(directories, count, detector, aligner, *, include_sface=False, cnn=None):
     groups = [collect(sample_phone_frames(path, count)[0], detector, aligner,
-                      include_sface=include_sface)
+                      include_sface=include_sface, cnn=cnn)
               for path in directories]
     labels = np.concatenate([np.repeat(person, len(group[0]))
                              for person, group in zip(PEOPLE, groups, strict=True)])
@@ -88,9 +93,16 @@ def main():
     parser.add_argument("--eval", nargs=4, type=Path, required=True, help="PNG 05 en orden K01–K04")
     parser.add_argument("--publish", help="Nombre nuevo del candidato alineado o SFace")
     parser.add_argument("--compare-sface", action="store_true", help="Incluye embeddings SFace normalizados.")
+    parser.add_argument("--cnn", type=Path, help="ONNX de la CNN propia (export_face_cnn.py)")
     args = parser.parse_args()
     root = verify_vault(args.vault)
-    report = "phone_sface_comparison.json" if args.compare_sface else "phone_alignment_comparison.json"
+    cnn = cv2.dnn.readNetFromONNX(str(args.cnn)) if args.cnn else None
+    if args.cnn:
+        report = f"phone_cnn_comparison_{args.cnn.stem}.json"
+    elif args.compare_sface:
+        report = "phone_sface_comparison.json"
+    else:
+        report = "phone_alignment_comparison.json"
     out = child(root, "experiments", report)
     if out.exists() and not args.publish:
         raise FileExistsError(out)
@@ -99,8 +111,9 @@ def main():
         if folder.exists():
             raise FileExistsError(folder)
     detector, aligner = load_models(args.models)
-    gallery, labels = phone_data(args.tune, 70, detector, aligner, include_sface=args.compare_sface)
-    test, expected = phone_data(args.eval, 20, detector, aligner, include_sface=args.compare_sface)
+    options = {"include_sface": args.compare_sface, "cnn": cnn}
+    gallery, labels = phone_data(args.tune, 70, detector, aligner, **options)
+    test, expected = phone_data(args.eval, 20, detector, aligner, **options)
     print("Capturas del celular procesadas. Procesando desconocidos LFW.", flush=True)
     lfw = fetch_lfw_people(color=True, min_faces_per_person=2, resize=.5, download_if_missing=False)
     train_mask, val_mask = split_by_identity(lfw.target)
@@ -109,8 +122,9 @@ def main():
         indices = np.flatnonzero(mask)
         sample = indices[spread_indices(len(indices), count)]
         unknown.append(collect((cv2.resize(to_bgr(lfw.images[i]), (188, 250)) for i in sample),
-                               detector, aligner, include_sface=args.compare_sface))
-    methods = ("box_hog", "aligned_hog", "sface") if args.compare_sface else ("box_hog", "aligned_hog")
+                               detector, aligner, **options))
+    methods = ("box_hog", "aligned_hog") + (("sface",) if args.compare_sface else ()) + (
+        ("face_cnn",) if cnn is not None else ())
     result = {
         "train_counts": {person: int((labels == person).sum()) for person in PEOPLE},
         **{
@@ -120,13 +134,18 @@ def main():
     }
     payload = json.dumps(result, indent=2, allow_nan=False).encode("utf-8")
     if args.publish:
-        method = "sface" if args.compare_sface else "aligned_hog"
+        method = "face_cnn" if cnn is not None else "sface" if args.compare_sface else "aligned_hog"
         folder.mkdir()
+        if method == "face_cnn":
+            # El candidato lleva su propia red; la galería solo vale con estos pesos.
+            write_synced(folder / FACE_CNN_NAME, args.cnn.read_bytes())
         threshold = {
             **result[method],
             "gallery_sha256": write_gallery(folder / "gallery.npz", gallery[methods.index(method)], labels),
             "preprocessing": method,
         }
+        if method == "face_cnn":
+            threshold["face_cnn_sha256"] = file_digest(folder / FACE_CNN_NAME)
         write_synced(folder / "summary.json", payload)
         write_synced(folder / DISTANCE_NAME, json.dumps(threshold, indent=2).encode("utf-8"))
     else:

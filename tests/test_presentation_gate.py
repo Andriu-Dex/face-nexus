@@ -1,5 +1,7 @@
 from scripts.operator_ui import may_send_physical
-from scripts.presentation_gate import AUTHORIZED, EMPTY, UNCERTAIN, PresentationGate, scene_kind
+from scripts.presentation_gate import (
+    AUTHORIZED, EMPTY, HEARTBEAT_SECONDS, UNCERTAIN, PresentationGate, scene_kind,
+)
 
 
 def test_recognition_does_not_actuate_until_enabled():
@@ -8,29 +10,26 @@ def test_recognition_does_not_actuate_until_enabled():
     assert may_send_physical("file", AUTHORIZED, gate, recognition_actuation=True) is False
 
 
-def test_one_order_until_operator_rearms():
+def test_authorized_renews_open_once_per_heartbeat():
     gate = PresentationGate()
-    assert may_send_physical("file", AUTHORIZED, gate, recognition_actuation=True) is False
-    assert may_send_physical("camera", AUTHORIZED, gate, recognition_actuation=True) is True
-    assert may_send_physical("camera", AUTHORIZED, gate, recognition_actuation=True) is False
+    assert gate.on_frame(AUTHORIZED, now=10.0) is True
+    assert gate.on_frame(AUTHORIZED, now=10.1) is False
+    assert gate.on_frame(AUTHORIZED, now=10.0 + HEARTBEAT_SECONDS) is True
+
+
+def test_non_authorized_frames_send_nothing():
+    gate = PresentationGate()
+    for kind in (EMPTY, UNCERTAIN):
+        assert gate.on_frame(kind, now=1.0) is False
+    assert gate.last_sent is None
+
+
+def test_fault_blocks_until_operator_rearms():
+    gate = PresentationGate()
+    gate.note_fault()
+    assert gate.on_frame(AUTHORIZED, now=5.0) is False
     gate.rearm()
-    assert may_send_physical("camera", AUTHORIZED, gate, recognition_actuation=True) is True
-
-
-def test_no_face_streak_does_not_rearm_same_person():
-    gate = PresentationGate()
-    assert gate.on_frame(AUTHORIZED) is True
-    for _ in range(8):
-        assert gate.on_frame(EMPTY) is False
-    assert gate.on_frame(AUTHORIZED) is False
-
-
-def test_ambiguous_denials_do_not_rearm():
-    gate = PresentationGate()
-    assert gate.on_frame(AUTHORIZED) is True
-    for _ in range(8):
-        assert gate.on_frame(UNCERTAIN) is False
-    assert gate.on_frame(AUTHORIZED) is False
+    assert gate.on_frame(AUTHORIZED, now=5.0) is True
 
 
 def test_scene_kind_splits_empty_from_uncertain():

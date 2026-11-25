@@ -51,11 +51,11 @@ def test_manual_angle_checks_firmware_range_and_sends_one_move(monkeypatch):
         def reset_input_buffer(self):
             pass
 
-    port = Port([LATCH_PONG, "SERVO RANGE 20 90", "SERVO ACK 45"])
+    port = Port([LATCH_PONG, "SERVO RANGE 0 180", "SERVO ACK 45"])
     monkeypatch.setattr("serial.Serial", lambda **_kwargs: port)
     monkeypatch.setattr("scripts.latch_serial.sleep", lambda _seconds: None)
     with pytest.raises(ValueError, match="ángulo"):
-        send_servo_test("COM5", "move", 91)
+        send_servo_test("COM5", "move", 181)
     assert not port.written
     assert send_servo_test("COM5", "move", 45) == "SERVO ACK 45"
     assert port.written == [b"PING\n", b"SERVO RANGE\n", b"SERVO MOVE 45\n"]

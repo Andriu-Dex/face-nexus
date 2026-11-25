@@ -63,8 +63,11 @@ def send_decision(connection, event_id, identity, decision):
     }
 
 
-SERVO_CLOSED = 20
-SERVO_OPEN = 90
+SERVO_CLOSED = 100
+SERVO_OPEN = 0
+# Recorrido físico del SG90; cierre y apertura son posiciones dentro de él.
+SERVO_MIN = 0
+SERVO_MAX = 180
 
 
 def send_servo_test(port, action="cycle", degrees=None):
@@ -73,8 +76,8 @@ def send_servo_test(port, action="cycle", degrees=None):
 
     if action not in ("check", "cycle", "move"):
         raise ValueError("Operación de servo desconocida.")
-    if action == "move" and (type(degrees) is not int or not SERVO_CLOSED <= degrees <= SERVO_OPEN):
-        raise ValueError(f"El ángulo debe estar entre {SERVO_CLOSED}° y {SERVO_OPEN}°.")
+    if action == "move" and (type(degrees) is not int or not SERVO_MIN <= degrees <= SERVO_MAX):
+        raise ValueError(f"El ángulo debe estar entre {SERVO_MIN}° y {SERVO_MAX}°.")
     connection = serial.Serial(baudrate=115200, timeout=.2, write_timeout=2)
     connection.port = port
     connection.dtr = False
@@ -89,7 +92,7 @@ def send_servo_test(port, action="cycle", degrees=None):
             return pong
         if action == "move":
             connection.write(b"SERVO RANGE\n")
-            read_ack(connection, f"SERVO RANGE {SERVO_CLOSED} {SERVO_OPEN}")
+            read_ack(connection, f"SERVO RANGE {SERVO_MIN} {SERVO_MAX}")
             connection.write(f"SERVO MOVE {degrees}\n".encode("ascii"))
             return read_ack(connection, f"SERVO ACK {degrees}")
         event = str(int(monotonic() * 1000))[-16:]

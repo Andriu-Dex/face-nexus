@@ -51,17 +51,22 @@ def validate_features(dataset, historical=False):
     return sessions
 
 
-def evaluate(train, validation):
-    # L2 divide cada vector por su propia norma; no aprende de VALIDATION.
-    x_train = normalize(train["vectors"].astype(np.float64))
-    x_validation = normalize(validation["vectors"].astype(np.float64))
-    models = {
+def build_models():
+    """Los cuatro clasificadores comparados, con los mismos hiperparámetros en todo el proyecto."""
+    return {
         "SVM": SVC(C=1, kernel="rbf"),
         "Random Forest": RandomForestClassifier(n_estimators=100, random_state=SEED, n_jobs=1),
         "k-NN": KNeighborsClassifier(n_neighbors=3, n_jobs=1),
         "MLP": MLPClassifier(hidden_layer_sizes=(32,), solver="lbfgs", max_iter=400,
                              random_state=SEED),
     }
+
+
+def evaluate(train, validation):
+    # L2 divide cada vector por su propia norma; no aprende de VALIDATION.
+    x_train = normalize(train["vectors"].astype(np.float64))
+    x_validation = normalize(validation["vectors"].astype(np.float64))
+    models = build_models()
     results = {}
     with threadpool_limits(limits=1):
         for name, model in models.items():

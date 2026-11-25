@@ -18,7 +18,7 @@ from scripts.dataset_capture import verify_vault
 from scripts.face_pipeline import load_detector, load_models
 from scripts.hog_knn import PEOPLE
 from scripts.latch_serial import (
-    SERVO_CLOSED, SERVO_OPEN, latch_ready, ping_firmware, send_decision, send_servo_test,
+    SERVO_CLOSED, SERVO_MAX, SERVO_MIN, SERVO_OPEN, latch_ready, ping_firmware, send_decision, send_servo_test,
 )
 from scripts.live_k01 import HUMAN_RUN, build_identify, face_descriptor, load_keras, paint_regions, recognize_frame
 from scripts.phone_serial_bench import local_stream_url
@@ -67,13 +67,13 @@ SPANISH = {
     "not_human": "no humano",
     "SIGNAL_LOST": "Señal perdida",
     "STALE": "Espera",
-    "REARM": "Siguiente presentación",
+    "REARM": "Pestillo rearmado",
     "stale_measurement": "sin medición reciente",
 }
 
 
 def may_send_physical(source, kind, gate, recognition_actuation=False):
-    """La cámara no acciona hasta que el reconocimiento esté evaluado con extraños."""
+    """Solo la cámara en vivo acciona, y solo si el operador abrió con --actuate."""
     if source != "camera" or recognition_actuation is not True:
         return False
     return gate.on_frame(kind)
@@ -336,8 +336,10 @@ def overlay_boxes(scene):
 class OperatorApp:
     def __init__(self, recognize, *, model_ready=True, reason="", url="", rotation=0,
                  port=None, labels=None, config_path=None, open_capture=None,
-                 trial_info=None, model_loader=None):
+                 trial_info=None, model_loader=None, actuate=False):
         self._core = recognize
+        # Sin --actuate la interfaz nunca envía órdenes físicas desde el reconocimiento.
+        self.actuate = actuate is True and bool(port)
         self.model_ready = model_ready
         self.trial_info = trial_info or {}
         self.model_loader = model_loader
@@ -415,6 +417,9 @@ class OperatorApp:
         if self._tick_alive:
             self._tick_id = self.window.after(40, self._tick)
 
+    def _mode_text(self):
+        return "Pestillo activo" if self.actuate else "Simulación"
+
     def _font(self, size, *, bold=False):
         return ("Segoe UI", size, "bold" if bold else "normal")
 
@@ -426,9 +431,9 @@ class OperatorApp:
         bar.columnconfigure(0, weight=1)
         tk.Label(bar, text="FaceNexus", font=self._font(18, bold=True), fg=INK, bg=SURFACE
                  ).grid(row=0, column=0, sticky="w")
-        sim_text = "Simulación"
+        sim_text = self._mode_text()
         if self.trial_info.get("label"):
-            sim_text = f"Simulación · {self.trial_info['label']}"
+            sim_text = f"{sim_text} · {self.trial_info['label']}"
         self.model_banner = tk.Label(bar, text=sim_text, font=self._font(11), fg=ACCENT, bg=SURFACE)
         self.model_banner.grid(row=0, column=1, sticky="e")
 
@@ -470,7 +475,7 @@ class OperatorApp:
                   bg=SURFACE, fg=INK, relief="flat", padx=12, pady=8, cursor="hand2"
                   ).pack(side=tk.LEFT, padx=(8, 0))
         self.rearm_btn = tk.Button(
-            controls, text="Siguiente presentación", command=self._rearm, font=self._font(10),
+            controls, text="Rearmar pestillo", command=self._rearm, font=self._font(10),
             bg=SURFACE, fg=INK, relief="flat", padx=12, pady=8, cursor="hand2")
         self.rearm_btn.pack(side=tk.LEFT, padx=(16, 0))
         self.cam_state_lbl = tk.Label(controls, text="", font=self._font(9), fg=WAIT_INK, bg=BG)
@@ -564,7 +569,7 @@ class OperatorApp:
         self.history.clear()
         self.log.delete(0, tk.END)
         self._hist_key = None
-        self.model_banner.config(text=f"Simulación · {self.model_selection.get()}")
+        self.model_banner.config(text=f"{self._mode_text()} · {self.model_selection.get()}")
         self._refresh_hw()
         self._set_status("Modelo cargado. Conecta el celular para empezar.")
         self._paint_viewer(force=True)
@@ -582,8 +587,8 @@ class OperatorApp:
         self.servo_buttons = []
         for text, action, angle in (
             ("Verificar ESP32", "check", None),
-            ("Ir a cierre (20°)", "move", SERVO_CLOSED),
-            ("Ir a apertura (90°)", "move", SERVO_OPEN),
+            (f"Ir a cierre ({SERVO_CLOSED}°)", "move", SERVO_CLOSED),
+            (f"Ir a apertura ({SERVO_OPEN}°)", "move", SERVO_OPEN),
             ("Probar ciclo", "cycle", None),
         ):
             button = ttk.Button(actions, text=text,
@@ -592,9 +597,9 @@ class OperatorApp:
             self.servo_buttons.append(button)
         manual = tk.Frame(panel, bg=SURFACE)
         manual.pack(anchor="w", pady=12)
-        ttk.Label(manual, text="Ángulo (20° a 90°)").pack(side="left")
+        ttk.Label(manual, text=f"Ángulo ({SERVO_MIN}° a {SERVO_MAX}°)").pack(side="left")
         self.servo_angle = tk.StringVar(value="45")
-        ttk.Spinbox(manual, from_=SERVO_CLOSED, to=SERVO_OPEN, textvariable=self.servo_angle,
+        ttk.Spinbox(manual, from_=SERVO_MIN, to=SERVO_MAX, textvariable=self.servo_angle,
                     width=6).pack(side="left", padx=8)
         move = ttk.Button(manual, text="Mover", command=lambda: self._test_servo("move"))
         move.pack(side="left")
@@ -1140,7 +1145,7 @@ class OperatorApp:
         simulate_authorize({
             key: scene[key] for key in ("outcome", "reason", "identity")
         } | {"event_id": scene.get("event_id")})
-        if may_send_physical(source, scene_kind(scene), self.gate):
+        if may_send_physical(source, scene_kind(scene), self.gate, self.actuate):
             self._send_latch(scene)
         self._refresh_rearm()
         if source == "camera":
@@ -1180,16 +1185,10 @@ class OperatorApp:
         if action == "move" and degrees is None:
             try:
                 degrees = int(self.servo_angle.get())
-                if not SERVO_CLOSED <= degrees <= SERVO_OPEN:
+                if not SERVO_MIN <= degrees <= SERVO_MAX:
                     raise ValueError
             except ValueError:
-                self.servo_status.set(f"Escribe un ángulo entero entre {SERVO_CLOSED}° y {SERVO_OPEN}°.")
-                return
-        if action != "check":
-            operation = f"mover el brazo a {degrees}°" if action == "move" else "hacer un ciclo"
-            if not messagebox.askokcancel(
-                    "Prueba manual", f"El servo va a {operation} en {port}. "
-                    "Deja libre el recorrido y retira las manos.", parent=self.window):
+                self.servo_status.set(f"Escribe un ángulo entero entre {SERVO_MIN}° y {SERVO_MAX}°.")
                 return
         for button in self.servo_buttons:
             button.state(["disabled"])
@@ -1223,9 +1222,8 @@ class OperatorApp:
         try:
             result = send_decision(self.connection, event, scene["identity"], "GRANTED")
             self.ack_text = result["ack"]
-            self.lock_text = ("pulso acusado; posición no confirmada"
+            self.lock_text = ("abierto: se cierra 3 s después del último autorizado"
                               if result["pulse_confirmed"] else "simulación · posición no confirmada")
-            self.log.insert(0, f"serie {result['ack']}")
         except (OSError, RuntimeError, TimeoutError, ValueError) as error:
             self.ack_text = f"error {error}"
             self._invalidate_port()
@@ -1314,7 +1312,12 @@ def main():
     parser.add_argument(
         "--trial", default="identity_four/identity_four_v2",
         help="identity_four/identity_four_v2 o identity_four_other/<run>. No pisa v2.")
+    parser.add_argument(
+        "--actuate", action="store_true",
+        help="Permite que un Autorizado de la cámara en vivo mueva el pestillo. Requiere --port.")
     args = parser.parse_args()
+    if args.actuate and not args.port:
+        parser.error("--actuate requiere --port con el ESP32 conectado.")
     vault = verify_vault(args.vault)
     url = parse_camera_url(args.url) if args.url else ""
     try:
@@ -1327,7 +1330,8 @@ def main():
         recognize, model_ready=model_ready, reason=reason or "", url=url,
         rotation=args.rotation, port=args.port or None,
         labels=load_identity_labels(vault), trial_info=info,
-        model_loader=lambda trial: build_recognizer(vault, args.models, trial))
+        model_loader=lambda trial: build_recognizer(vault, args.models, trial),
+        actuate=args.actuate)
     app.run()
 
 
