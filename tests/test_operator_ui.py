@@ -368,7 +368,6 @@ def test_rejected_face_shows_unconfirmed_identity_and_diagnostic(tmp_path):
     app._apply(_blank(), source="file")
     assert "rostro humano detectado" in app.detail_lbl.cget("text")
     assert app.identity_lbl.cget("text").endswith("Desconocido")
-    app.tech_var.set(True)
     app._refresh_tech()
     text = app.tech_lbl.cget("text")
     assert "K01" in text and "d=0.612" in text and "T=0.530" in text
@@ -537,7 +536,6 @@ def test_live_view_labels_each_face_independently(app):
     assert labels[1].startswith("Autorizado") and labels[4].startswith("Desconocido")
     assert "K01 · Alpha, Desconocido" in app.identity_lbl.cget("text")
     assert app.decision_title.cget("text") == "Acceso concedido"
-    app.tech_var.set(True)
     app._refresh_tech()
     assert "d=0.600" in app.tech_lbl.cget("text")
 

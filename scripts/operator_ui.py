@@ -71,22 +71,58 @@ PIPELINE_STEPS = (
     ("decide", "Permiso"),
     ("esp32", "ESP32 (pestillo)"),
 )
-# Cifras medidas y registradas en docs/decisions.md (D-90 a D-92); no se calculan aquí.
+# Resumen de cada variante; sus cifras medidas están en RESULT_TABLES.
 MODEL_FACTS = {
-    "identity_four_other/identity_four_0406_real_fusion_w075": (
-        "CNN propia (75 %) + SFace de apoyo (25 %) · k-NN, k = 3 · T = 1,011 · G = 0,114",
-        ["Integrantes, video 05: 89 % de fotogramas aceptados; 4/4 abren",
-         "Desconocidos reales reservados: 0/5 abren",
-         "Desconocidos LFW de validación: 0/999 aceptados",
-         "Confusiones entre integrantes: 0"],
-    ),
-    "identity_four_other/identity_four_phone_04_cnn_run1": (
+    "identity_four_other/identity_four_0406_real_fusion_w075":
+        "CNN propia (75 %) + SFace de apoyo (25 %) · k-NN, k = 3 · T = 1,011 · G = 0,114 · "
+        "galería videos 04 + 06",
+    "identity_four_other/identity_four_phone_04_cnn_run1":
         "CNN propia sola · k-NN, k = 3 · galería del video 04",
-        ["Integrantes, video 05: 68/75 fotogramas aceptados",
-         "Desconocidos LFW de validación: 2/999 aceptados",
-         "Confusiones entre integrantes: 0"],
-    ),
 }
+# Tablas medidas del informe (docs/decisions.md D-88 a D-92). Se muestran tal cual; no se recalculan.
+# Cada tabla: (título, nota, encabezados, filas). La fila marcada con «*» es la variante en uso.
+RESULT_TABLES = (
+    ("Entrenamiento de la CNN propia",
+     "PyTorch, CosFace (s = 30, m = 0,35), vector de 128. TAR con 100 000 pares de 500 identidades no vistas.",
+     ("Corrida", "Identidades", "Imágenes", "TAR@1 %", "TAR@0,1 %"),
+     (("1 *", "5000", "259 980", "99,0 %", "96,1 %"),
+      ("2", "20 000", "1 043 297", "99,7 %", "98,8 %"))),
+    ("Extractor: HOG frente a la CNN propia",
+     "k-NN con rechazo; galería video 04, prueba video 05, umbral ≤ 1 % de LFW.",
+     ("Extractor", "Integrantes", "LFW aceptados", "Confusiones"),
+     (("HOG de caja", "43/75", "10/999", "0"),
+      ("HOG alineado", "53/75", "8/999", "0"),
+      ("CNN propia, corrida 1 *", "68/75", "2/999", "0"),
+      ("CNN propia, corrida 2", "72/75", "14/999", "0"))),
+    ("Clasificadores sobre la CNN propia",
+     "Mismos vectores y particiones. Exactitud y macro-F1 en conjunto cerrado; rechazo con ≤ 1 % de LFW.",
+     ("Clasificador", "Exactitud", "Macro-F1", "Integrantes", "LFW aceptados"),
+     (("k-NN, distancia y holgura *", "100 %", "1,000", "68/75", "2/999"),
+      ("SVM (RBF)", "98,7 %", "0,987", "69/75", "10/999"),
+      ("Random Forest", "98,7 %", "0,987", "46/75", "6/999"),
+      ("MLP", "93,3 %", "0,933", "53/75", "17/999"))),
+    ("Influencia de cada parte: CNN propia y SFace",
+     "Distancia² = w·d²CNN + (1 − w)·d²SFace; w es la fracción que aporta la red propia.",
+     ("Variante", "Peso CNN (w)", "Integrantes", "LFW aceptados"),
+     (("Solo CNN propia", "100 %", "68/75", "2/999"),
+      ("Fusión *", "75 %", "74/75", "5/999"),
+      ("Fusión", "50 %", "75/75", "10/999"),
+      ("Fusión", "25 %", "75/75", "13/999"),
+      ("Solo SFace", "0 %", "75/75", "11/999"))),
+    ("Recalibración con desconocidos reales",
+     "Galería videos 04 + 06; cada desconocido se evalúa con un umbral calibrado sin él.",
+     ("Variante", "Desconocidos que abren", "LFW", "Fotogramas integrantes", "Integrantes que abren"),
+     (("Solo CNN propia", "0/5", "0/999", "79 %", "4/4"),
+      ("CNN 75 % + SFace 25 % *", "0/5", "0/999", "89 %", "4/4"),
+      ("CNN 50 % + SFace 50 %", "1/5", "0/999", "90 %", "4/4"))),
+    ("Otras mediciones",
+     "",
+     ("Medición", "Resultado"),
+     (("CNN humano / no humano (Keras, LFW + CIFAR-10)", "99,96 % en 12 627 ejemplos"),
+      ("Inferencia por fotograma en vivo", "22 a 33 ms"),
+      ("Vista en vivo", "13 a 14 fps"),
+      ("Personas no calibradas en el ensayo en vivo", "8/8 rechazadas"))),
+)
 MAP_PARTS = ("private", "identity_labels.json")
 NAME_MAP = Path(__file__).resolve().parents[1] / "private" / "external_frames_mapping_20261117.json"
 DEFAULT_VAULT = Path("V:/FaceNexus")
@@ -680,35 +716,6 @@ class OperatorApp:
                                     wraplength=320)
         self.command_lbl.pack(anchor="w", pady=(8, 0))
 
-        rules = self._section(side, "Reglas de apertura")
-        self.policy_var = tk.StringVar(value="any")
-        for value, text in (("any", "Basta un integrante autorizado"),
-                            ("all", "Todos los rostros deben estar autorizados")):
-            tk.Radiobutton(rules, text=text, value=value, variable=self.policy_var,
-                           command=self._apply_rules, font=self._font(9), fg=INK, bg=SURFACE,
-                           activebackground=SURFACE, selectcolor=SURFACE, anchor="w",
-                           wraplength=300, justify="left").pack(anchor="w")
-        self.frames_var = tk.StringVar(value=str(self.gate.consensus_frames))
-        self.hold_var = tk.StringVar(value=format_seconds(self.hold_seconds))
-        # Se escriben a mano (Enter o salir del campo aplica) o con las flechas.
-        for text, variable, low, high, step in (
-                ("Fotogramas seguidos para abrir", self.frames_var, FRAMES_MIN, FRAMES_MAX, 1),
-                ("Segundos para cerrar tras salir", self.hold_var,
-                 HOLD_MIN_SECONDS, HOLD_MAX_SECONDS, 0.5)):
-            line = tk.Frame(rules, bg=SURFACE)
-            line.pack(fill="x", pady=(6, 0))
-            tk.Label(line, text=text, font=self._font(9), fg=INK, bg=SURFACE).pack(side=tk.LEFT)
-            box = ttk.Spinbox(line, from_=low, to=high, increment=step, width=5,
-                              textvariable=variable, command=self._apply_rules)
-            box.pack(side=tk.RIGHT)
-            box.bind("<Return>", lambda _event: self._apply_rules())
-            box.bind("<KP_Enter>", lambda _event: self._apply_rules())
-            box.bind("<FocusOut>", lambda _event: self._apply_rules())
-        self.rules_lbl = tk.Label(rules, text="", font=self._font(8), fg=WAIT_INK, bg=SURFACE,
-                                  anchor="w", justify="left", wraplength=320)
-        self.rules_lbl.pack(anchor="w", pady=(6, 0))
-        self._describe_rules()
-
         perms = self._section(side, "Permisos de acceso")
         self.perm_vars = {}
         for person in self.permissions:
@@ -726,21 +733,6 @@ class OperatorApp:
             var.trace_add("write", lambda *_a, v=var, s=state: self._paint_permission(v, s))
             self._paint_permission(var, state)
 
-        model = self._section(side, "Modelo y exactitud medida")
-        self.model_lbl = tk.Label(model, text="", font=self._font(9), fg=INK, bg=SURFACE,
-                                  anchor="w", justify="left", wraplength=320)
-        self.model_lbl.pack(anchor="w")
-        if self.model_loader is not None and not self.port:
-            names = {trial: name for name, trial in MODEL_OPTIONS.items()}
-            self.model_selection = tk.StringVar(value=names.get(self.trial_info.get("label"), ""))
-            ttk.Label(model, text="Cambiar modelo para comparar", background=SURFACE
-                      ).pack(anchor="w", pady=(8, 2))
-            selector = ttk.Combobox(model, textvariable=self.model_selection,
-                                    values=list(MODEL_OPTIONS), state="readonly")
-            selector.pack(fill="x")
-            selector.bind("<<ComboboxSelected>>", self._select_model)
-        self._refresh_model_card()
-
         hist = self._section(side, "Historial (sin imágenes)")
         log_frame = tk.Frame(hist, bg=SURFACE)
         log_frame.pack(fill="both", expand=True)
@@ -752,23 +744,9 @@ class OperatorApp:
         self.log.pack(side=tk.LEFT, fill="both", expand=True)
         scroll.config(command=self.log.yview)
 
-        tech = self._section(side, "Diagnóstico")
-        self.tech_var = tk.BooleanVar(value=False)
-        tk.Checkbutton(
-            tech, text="Mostrar detalle técnico (distancias, umbrales, huella)",
-            variable=self.tech_var, command=self._refresh_tech, font=self._font(9),
-            fg=WAIT_INK, bg=SURFACE, activebackground=SURFACE, selectcolor=SURFACE, anchor="w",
-            wraplength=320, justify="left").pack(anchor="w")
-        self.tech_lbl = tk.Label(tech, text="", font=("Consolas", 8), fg=WAIT_INK, bg=SURFACE,
-                                 anchor="w", justify="left", wraplength=320)
-        self.tech_lbl.pack(anchor="w")
-        self._scene = {}
-        self.hw_lbl = tk.Label(tech, text="", font=self._font(8), fg=WAIT_INK, bg=SURFACE,
-                               wraplength=320, justify="left", anchor="w")
-        self.hw_lbl.pack(anchor="w", pady=(6, 0))
-        self.status = tk.Label(tech, text="Listo", font=self._font(8), fg=WAIT_INK, bg=SURFACE,
-                               wraplength=320, justify="left", anchor="w")
-        self.status.pack(anchor="w", pady=(4, 0))
+        technical = tk.Frame(tabs, bg=BG)
+        tabs.add(technical, text="Datos técnicos")
+        self._build_tech_tab(technical)
         self._refresh_hw()
         self._refresh_live_panel()
         self._paint_viewer()
@@ -814,11 +792,8 @@ class OperatorApp:
 
     def _refresh_model_card(self):
         facts = MODEL_FACTS.get(self.trial_info.get("label"))
-        if facts:
-            title, lines = facts
-            text = title + "\n" + "\n".join(f"•  {line}" for line in lines)
-        else:
-            text = "Modelo de comparación. Sus cifras están en el informe."
+        # Las cifras medidas de cada variante están en las tablas de esta pestaña.
+        text = facts or "Modelo de comparación. Sus cifras están en las tablas y en el informe."
         self.model_lbl.config(text=text)
         self.model_banner.config(text=self._model_name())
 
@@ -850,6 +825,82 @@ class OperatorApp:
         self._set_status("Modelo cargado. Conecta el celular para empezar.")
         self._paint_viewer(force=True)
 
+    def _build_tech_tab(self, page):
+        """Medición en vivo, modelo activo y las tablas medidas que respaldan la elección."""
+        page.columnconfigure(1, weight=1)
+        page.columnconfigure(2, weight=1)
+        page.rowconfigure(0, weight=1)
+
+        live = tk.Frame(page, bg=BG, width=380)
+        live.grid(row=0, column=0, sticky="nsw", padx=(0, 12), pady=(0, 8))
+        live.grid_propagate(False)
+        live.columnconfigure(0, weight=1)
+        model = self._section(live, "Modelo activo")
+        self.model_lbl = tk.Label(model, text="", font=self._font(9), fg=INK, bg=SURFACE,
+                                  anchor="w", justify="left", wraplength=330)
+        self.model_lbl.pack(anchor="w")
+        tk.Label(model, font=self._font(9), fg=WAIT_INK, bg=SURFACE, anchor="w", justify="left",
+                 wraplength=330,
+                 text="Regla de aceptación: d₁ ≤ T y d₂ − d₁ ≥ G, donde d₁ es la distancia al "
+                      "integrante más cercano y d₂ al siguiente integrante distinto. Después se "
+                      "revisa el permiso y la regla de la escena.").pack(anchor="w", pady=(8, 0))
+        if self.model_loader is not None and not self.port:
+            names = {trial: name for name, trial in MODEL_OPTIONS.items()}
+            self.model_selection = tk.StringVar(value=names.get(self.trial_info.get("label"), ""))
+            ttk.Label(model, text="Cambiar modelo para comparar", background=SURFACE
+                      ).pack(anchor="w", pady=(8, 2))
+            selector = ttk.Combobox(model, textvariable=self.model_selection,
+                                    values=list(MODEL_OPTIONS), state="readonly")
+            selector.pack(fill="x")
+            selector.bind("<<ComboboxSelected>>", self._select_model)
+        self._refresh_model_card()
+
+        measure = self._section(live, "Último fotograma analizado")
+        self.tech_lbl = tk.Label(measure, text="", font=("Consolas", 9), fg=INK, bg=SURFACE,
+                                 anchor="w", justify="left", wraplength=330)
+        self.tech_lbl.pack(anchor="w")
+        self._scene = {}
+        system = self._section(live, "Rendimiento y hardware")
+        self.perf_lbl = tk.Label(system, text="", font=self._font(9), fg=INK, bg=SURFACE,
+                                 anchor="w", justify="left")
+        self.perf_lbl.pack(anchor="w")
+        self.hw_lbl = tk.Label(system, text="", font=self._font(9), fg=WAIT_INK, bg=SURFACE,
+                               wraplength=330, justify="left", anchor="w")
+        self.hw_lbl.pack(anchor="w", pady=(6, 0))
+        self.status = tk.Label(system, text="Listo", font=self._font(9), fg=WAIT_INK, bg=SURFACE,
+                               wraplength=330, justify="left", anchor="w")
+        self.status.pack(anchor="w", pady=(4, 0))
+
+        # Las tablas medidas se reparten en dos columnas para verse sin desplazarse.
+        columns = [tk.Frame(page, bg=BG) for _ in range(2)]
+        for index, column in enumerate(columns, start=1):
+            column.grid(row=0, column=index, sticky="nsew", padx=(0, 12 if index == 1 else 0))
+        for index, table in enumerate(RESULT_TABLES):
+            self._result_table(columns[0 if index < 3 else 1], *table)
+        tk.Label(columns[1], text="* variante en uso. Cifras medidas y registradas en el informe.",
+                 font=self._font(8), fg=WAIT_INK, bg=BG).pack(anchor="w", pady=(8, 0))
+        self._refresh_tech()
+
+    def _result_table(self, parent, title, note, headers, rows):
+        frame = self._section(parent, title)
+        if note:
+            tk.Label(frame, text=note, font=self._font(8), fg=WAIT_INK, bg=SURFACE, anchor="w",
+                     justify="left", wraplength=560).pack(anchor="w", pady=(0, 6))
+        grid = tk.Frame(frame, bg=SURFACE)
+        grid.pack(fill="x")
+        grid.columnconfigure(0, weight=1)
+        for column, text in enumerate(headers):
+            tk.Label(grid, text=text, font=self._font(8, bold=True), fg=WAIT_INK, bg=SURFACE,
+                     anchor="w" if column == 0 else "e").grid(row=0, column=column, sticky="ew",
+                                                             padx=(0, 10))
+        for row_index, row in enumerate(rows, start=1):
+            in_use = row[0].endswith("*")
+            for column, text in enumerate(row):
+                tk.Label(grid, text=text, font=self._font(9, bold=in_use),
+                         fg=ACCENT if in_use else INK, bg=SURFACE,
+                         anchor="w" if column == 0 else "e").grid(
+                    row=row_index, column=column, sticky="ew", padx=(0, 10), pady=1)
+
     def _build_servo_tab(self, page):
         panel = tk.Frame(page, bg=SURFACE, padx=24, pady=20)
         panel.pack(anchor="nw", fill="x", padx=16, pady=16)
@@ -861,7 +912,8 @@ class OperatorApp:
             text=("Nodo de actuación del sistema. Windows envía por USB serie la etiqueta "
                   "«CHECK <evento> <K01–K04> GRANTED» mientras haya un integrante autorizado, "
                   "renovándola cada 0,5 s. El ESP32 abre a "
-                  f"{SERVO_OPEN}° (señal PWM en GPIO25) y, si pasan 3 s sin renovación, cierra "
+                  f"{SERVO_OPEN}° (señal PWM en GPIO25) y, si pasa el tiempo de cierre sin "
+                  "renovación (3 s por defecto, ajustable abajo), cierra "
                   f"solo a {SERVO_CLOSED}°: ante cualquier falla el pestillo queda cerrado.")
         ).pack(anchor="w", pady=(6, 0))
         tk.Label(panel, text="PRUEBA MANUAL", font=self._font(8, bold=True), fg=WAIT_INK,
@@ -893,6 +945,40 @@ class OperatorApp:
         self.servo_buttons.append(move)
         self.servo_status = tk.StringVar(value="Selecciona una operación. Verifica el recorrido visualmente.")
         ttk.Label(panel, textvariable=self.servo_status, wraplength=680).pack(anchor="w")
+
+        # Reglas de apertura: viven junto al pestillo porque gobiernan cuándo se le envía la orden.
+        rules = tk.Frame(page, bg=SURFACE, padx=24, pady=20)
+        rules.pack(anchor="nw", fill="x", padx=16, pady=(0, 16))
+        tk.Label(rules, text="REGLAS DE APERTURA", font=self._font(8, bold=True), fg=WAIT_INK,
+                 bg=SURFACE).pack(anchor="w", pady=(0, 6))
+        self.policy_var = tk.StringVar(value="any")
+        for value, text in (("any", "Basta un integrante autorizado"),
+                            ("all", "Todos los rostros deben estar autorizados")):
+            tk.Radiobutton(rules, text=text, value=value, variable=self.policy_var,
+                           command=self._apply_rules, font=self._font(9), fg=INK, bg=SURFACE,
+                           activebackground=SURFACE, selectcolor=SURFACE, anchor="w",
+                           wraplength=300, justify="left").pack(anchor="w")
+        self.frames_var = tk.StringVar(value=str(self.gate.consensus_frames))
+        self.hold_var = tk.StringVar(value=format_seconds(self.hold_seconds))
+        # Se escriben a mano (Enter o salir del campo aplica) o con las flechas.
+        for text, variable, low, high, step in (
+                ("Fotogramas seguidos para abrir", self.frames_var, FRAMES_MIN, FRAMES_MAX, 1),
+                ("Segundos para cerrar tras salir", self.hold_var,
+                 HOLD_MIN_SECONDS, HOLD_MAX_SECONDS, 0.5)):
+            line = tk.Frame(rules, bg=SURFACE)
+            line.pack(anchor="w", pady=(6, 0))
+            tk.Label(line, text=text, font=self._font(9), fg=INK, bg=SURFACE, width=30,
+                     anchor="w").pack(side=tk.LEFT)
+            box = ttk.Spinbox(line, from_=low, to=high, increment=step, width=5,
+                              textvariable=variable, command=self._apply_rules)
+            box.pack(side=tk.LEFT)
+            box.bind("<Return>", lambda _event: self._apply_rules())
+            box.bind("<KP_Enter>", lambda _event: self._apply_rules())
+            box.bind("<FocusOut>", lambda _event: self._apply_rules())
+        self.rules_lbl = tk.Label(rules, text="", font=self._font(8), fg=WAIT_INK, bg=SURFACE,
+                                  anchor="w", justify="left", wraplength=760)
+        self.rules_lbl.pack(anchor="w", pady=(6, 0))
+        self._describe_rules()
 
     def _set_status(self, text):
         self.status.config(text=text)
@@ -1080,6 +1166,11 @@ class OperatorApp:
         else:
             self.latch_icon.config(text=ICON_LOCK, fg=INK)
             self.latch_state_lbl.config(text="CERRADO", fg=INK)
+        perf = (f"Vista: {self.metrics['view_fps']:.0f} fps · "
+                f"inferencia: {self.metrics['infer_ms']:.0f} ms\n"
+                f"Edad del fotograma mostrado: {self.metrics['frame_age_ms']:.0f} ms")
+        if self.perf_lbl.cget("text") != perf:
+            self.perf_lbl.config(text=perf)
         camera_ok = self.cam_state == "live"
         states = {
             "phone": camera_ok,
@@ -1094,10 +1185,7 @@ class OperatorApp:
 
 
     def _refresh_tech(self):
-        if self.tech_var.get():
-            self.tech_lbl.config(text=trial_banner(self.trial_info) + technical_lines(self._scene, self.labels))
-        else:
-            self.tech_lbl.config(text="")
+        self.tech_lbl.config(text=trial_banner(self.trial_info) + technical_lines(self._scene, self.labels))
 
     def _refresh_rearm(self):
         self.rearm_btn.config(state=("normal" if not self.gate.can_send else "disabled"))
