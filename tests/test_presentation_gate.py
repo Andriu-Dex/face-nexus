@@ -70,3 +70,8 @@ def test_fault_blocks_even_with_new_streak():
     gate.note_fault()
     consensus(gate, now=2.0)
     assert gate.on_frame(AUTHORIZED, now=2.0) is False
+
+
+def test_operator_can_change_frames_needed_to_open():
+    gate = PresentationGate(consensus_frames=3)
+    assert [gate.on_frame(AUTHORIZED, now=step) for step in range(3)] == [False, False, True]

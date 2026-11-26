@@ -13,17 +13,18 @@ import json
 
 import cv2
 
-from scripts.access import default_permissions, simulate_authorize
+from scripts.access import default_permissions, require_everyone_authorized, simulate_authorize
 from scripts.calibrate_hog import ROTATE
 from scripts.dataset_capture import verify_vault
 from scripts.face_pipeline import load_detector, load_models
 from scripts.hog_knn import PEOPLE
 from scripts.latch_serial import (
-    SERVO_CLOSED, SERVO_MAX, SERVO_MIN, SERVO_OPEN, latch_ready, open_latch_port, ping_firmware, run_servo_test, send_decision, send_servo_test,
+    HOLD_MAX_SECONDS, HOLD_MIN_SECONDS, SERVO_CLOSED, SERVO_MAX, SERVO_MIN, SERVO_OPEN, latch_ready,
+    open_latch_port, ping_firmware, run_servo_test, send_decision, send_servo_test, set_hold,
 )
 from scripts.live_k01 import HUMAN_RUN, build_identify, face_descriptor, load_keras, paint_regions, recognize_frame
 from scripts.phone_serial_bench import local_stream_url
-from scripts.presentation_gate import CONSENSUS_FRAMES, PresentationGate, scene_kind
+from scripts.presentation_gate import PresentationGate, scene_kind
 
 
 BG = "#EDF2F6"
@@ -55,7 +56,7 @@ ICON_LOCK = "\uE72E"
 ICON_UNLOCK = "\uE785"
 ICON_WARNING = "\uE7BA"
 ICON_SHIELD = "\uEA18"
-LATCH_HOLD_SECONDS = 3.0
+LATCH_HOLD_SECONDS = 3
 PIPELINE_STEPS = (
     ("phone", "Celular (captura)"),
     ("detect", "YuNet (rostro)"),
@@ -109,6 +110,7 @@ SPANISH = {
     "STALE": "Espera",
     "REARM": "Pestillo rearmado",
     "stale_measurement": "sin medición reciente",
+    "unauthorized_present": "hay una persona no autorizada en la escena",
 }
 
 
@@ -421,6 +423,10 @@ class OperatorApp:
         self.capture = None
         self.latch_ok = False
         self.gate = PresentationGate()
+        # Reglas de apertura ajustables por el operador (sección «Reglas de apertura»).
+        self.hold_seconds = LATCH_HOLD_SECONDS
+        self.require_everyone = False
+        self.hold_note = ""
         self.ack_text = "sin acuse"
         self.lock_text = "posición no confirmada · simulación"
         self.permissions = default_permissions()
@@ -617,6 +623,29 @@ class OperatorApp:
                                     fg=WAIT_INK, bg=SURFACE, anchor="w", justify="left",
                                     wraplength=320)
         self.command_lbl.pack(anchor="w", pady=(8, 0))
+
+        rules = self._section(side, "Reglas de apertura")
+        self.policy_var = tk.StringVar(value="any")
+        for value, text in (("any", "Basta un integrante autorizado"),
+                            ("all", "Todos los rostros deben estar autorizados")):
+            tk.Radiobutton(rules, text=text, value=value, variable=self.policy_var,
+                           command=self._apply_rules, font=self._font(9), fg=INK, bg=SURFACE,
+                           activebackground=SURFACE, selectcolor=SURFACE, anchor="w",
+                           wraplength=300, justify="left").pack(anchor="w")
+        self.frames_var = tk.StringVar(value=str(self.gate.consensus_frames))
+        self.hold_var = tk.StringVar(value=str(self.hold_seconds))
+        for text, variable, low, high in (
+                ("Fotogramas seguidos para abrir", self.frames_var, 3, 20),
+                ("Segundos para cerrar tras salir", self.hold_var, HOLD_MIN_SECONDS, HOLD_MAX_SECONDS)):
+            line = tk.Frame(rules, bg=SURFACE)
+            line.pack(fill="x", pady=(6, 0))
+            tk.Label(line, text=text, font=self._font(9), fg=INK, bg=SURFACE).pack(side=tk.LEFT)
+            ttk.Spinbox(line, from_=low, to=high, width=4, textvariable=variable,
+                        state="readonly", command=self._apply_rules).pack(side=tk.RIGHT)
+        self.rules_lbl = tk.Label(rules, text="", font=self._font(8), fg=WAIT_INK, bg=SURFACE,
+                                  anchor="w", justify="left", wraplength=320)
+        self.rules_lbl.pack(anchor="w", pady=(6, 0))
+        self._describe_rules()
 
         perms = self._section(side, "Permisos de acceso")
         self.perm_vars = {}
@@ -951,24 +980,25 @@ class OperatorApp:
     def _refresh_live_panel(self):
         """Racha de verificación, estado estimado del pestillo y recorrido del dato."""
         now = monotonic()
-        streak = min(self._ui_streak, CONSENSUS_FRAMES)
+        needed = self.gate.consensus_frames
+        streak = min(self._ui_streak, needed)
         width = max(self.streak_bar.winfo_width(), 2)
         self.streak_bar.delete("all")
-        fill = ACCENT if streak >= CONSENSUS_FRAMES else ACCENT_SOFT
-        self.streak_bar.create_rectangle(0, 0, width * streak / CONSENSUS_FRAMES, 10,
+        fill = ACCENT if streak >= needed else ACCENT_SOFT
+        self.streak_bar.create_rectangle(0, 0, width * streak / needed, 10,
                                          fill=fill, outline="")
-        if streak >= CONSENSUS_FRAMES:
-            text = f"Identidad confirmada en {CONSENSUS_FRAMES} fotogramas seguidos"
+        if streak >= needed:
+            text = f"Identidad confirmada en {needed} fotogramas seguidos"
         elif streak:
-            text = f"Verificando identidad… {streak}/{CONSENSUS_FRAMES} fotogramas"
+            text = f"Verificando identidad… {streak}/{needed} fotogramas"
         else:
-            text = f"Abre tras {CONSENSUS_FRAMES} fotogramas autorizados seguidos"
+            text = f"Abre tras {needed} fotogramas autorizados seguidos"
         self.streak_lbl.config(text=text)
         remaining = self._latch_open_until - now
         if not self.actuate:
             self.latch_icon.config(text=ICON_LOCK, fg=WAIT_INK)
             self.latch_state_lbl.config(
-                text="Simulación\n" + ("abriría ahora" if streak >= CONSENSUS_FRAMES
+                text="Simulación\n" + ("abriría ahora" if streak >= needed
                                        else "no se envían órdenes"), fg=WAIT_INK)
         elif remaining > 0:
             self.latch_icon.config(text=ICON_UNLOCK, fg=ACCENT)
@@ -1000,9 +1030,53 @@ class OperatorApp:
         self.rearm_btn.config(state=("normal" if not self.gate.can_send else "disabled"))
 
     def _rearm(self):
+        # Si una falla serie cerró el puerto, rearmar lo vuelve a abrir y verificar con PING;
+        # sin un PONG válido el pestillo sigue bloqueado.
+        if self.port and self.connection is None:
+            self._open_port(self.port)
+            if not self.latch_ok:
+                self._refresh_rearm()
+                return
         self.gate.rearm()
         self._record({"outcome": "REARM", "reason": "rearm", "identity": None}, "operador")
         self._refresh_rearm()
+
+    def _apply_rules(self):
+        self.require_everyone = self.policy_var.get() == "all"
+        self.gate.consensus_frames = int(self.frames_var.get())
+        # Cambiar una regla exige una racha nueva medida con la regla nueva.
+        self.gate.interrupt()
+        self._ui_streak = 0
+        seconds = int(self.hold_var.get())
+        if seconds != self.hold_seconds:
+            self.hold_seconds = seconds
+            self._push_hold()
+        self._describe_rules()
+
+    def _push_hold(self):
+        """Envía el tiempo de cierre al ESP32; sin conexión se envía al conectar."""
+        self.hold_note = ""
+        if self.connection is None or not self.latch_ok:
+            return
+        try:
+            set_hold(self.connection, self.hold_seconds)
+        except (OSError, RuntimeError, TimeoutError, ValueError):
+            # Firmware anterior sin HOLD: sigue cerrando a los 3 s de fábrica.
+            self.hold_seconds = LATCH_HOLD_SECONDS
+            self.hold_var.set(str(LATCH_HOLD_SECONDS))
+            self.hold_note = ("El ESP32 no aceptó el cambio (carga el firmware actualizado); "
+                              f"cierra a los {LATCH_HOLD_SECONDS} s.")
+
+    def _describe_rules(self):
+        frames = self.gate.consensus_frames
+        seconds = f"{frames / 13:.1f}".replace(".", ",")
+        text = (f"Abre tras {frames} fotogramas autorizados seguidos (≈ {seconds} s a 13 fps). "
+                f"El ESP32 cierra solo {self.hold_seconds} s después del último autorizado.")
+        if frames < 8:
+            text += " Con menos de 8 fotogramas los rechazos de desconocidos no están medidos."
+        if self.hold_note:
+            text += " " + self.hold_note
+        self.rules_lbl.config(text=text)
 
     def _sync_permissions(self):
         for person, var in self.perm_vars.items():
@@ -1014,7 +1088,10 @@ class OperatorApp:
             pong = ping_firmware(self.connection)
             self.latch_ok = latch_ready(pong)
             self.ack_text = pong
-            if not self.latch_ok:
+            if self.latch_ok:
+                self._push_hold()
+                self._describe_rules()
+            else:
                 self.connection.close()
                 self.connection = None
                 self.lock_text = "simulación · firmware no LATCH"
@@ -1430,7 +1507,8 @@ class OperatorApp:
         self._schedule_tick()
 
     def recognize_frame(self, frame):
-        return self._core(frame, self.permissions)
+        scene = self._core(frame, self.permissions)
+        return require_everyone_authorized(scene) if self.require_everyone else scene
 
     def _commit_scene(self, scene, source, captured_at=None):
         simulate_authorize({
@@ -1526,10 +1604,10 @@ class OperatorApp:
         try:
             result = send_decision(self.connection, event, scene["identity"], "GRANTED")
             self.ack_text = result["ack"]
-            self._latch_open_until = monotonic() + LATCH_HOLD_SECONDS
+            self._latch_open_until = monotonic() + self.hold_seconds
             self.command_lbl.config(
                 text=f"Última etiqueta enviada: {result['command']}\nAcuse del ESP32: {result['ack']}")
-            self.lock_text = ("abierto: se cierra 3 s después del último autorizado"
+            self.lock_text = (f"abierto: se cierra {self.hold_seconds} s después del último autorizado"
                               if result["pulse_confirmed"] else "simulación · posición no confirmada")
         except (OSError, RuntimeError, TimeoutError, ValueError) as error:
             self.ack_text = f"error {error}"

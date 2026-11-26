@@ -1,6 +1,8 @@
 import pytest
 
-from scripts.latch_serial import LATCH_PONG, format_check, latch_ready, read_ack, send_decision, send_servo_test
+from scripts.latch_serial import (
+    LATCH_PONG, format_check, latch_ready, read_ack, send_decision, send_servo_test, set_hold,
+)
 
 
 class _Lines:
@@ -68,3 +70,13 @@ def test_read_line_drops_port_open_noise():
             return bytes((0xFF,)) * 40 + b"ACK 7 K01 GRANTED ACTUATED\n"
 
     assert read_line(Noisy()) == "ACK 7 K01 GRANTED ACTUATED"
+
+
+def test_hold_is_sent_in_milliseconds_and_bounded():
+    connection = _Lines(["HOLD ACK 5000"])
+    assert set_hold(connection, 5) == "HOLD ACK 5000"
+    assert connection.written == [b"HOLD 5000\n"]
+    with pytest.raises(RuntimeError):
+        set_hold(_Lines(["ERROR BAD_COMMAND"]), 5)
+    with pytest.raises(ValueError):
+        set_hold(_Lines([]), 0)

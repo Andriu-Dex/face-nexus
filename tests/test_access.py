@@ -1,6 +1,6 @@
 from scripts.access import (
     DENIED, GRANTED, UNKNOWN, decide, decide_scene, default_permissions,
-    simulate_authorize, validate_permissions,
+    require_everyone_authorized, simulate_authorize, validate_permissions,
 )
 from scripts.hog_knn import PEOPLE
 
@@ -31,3 +31,14 @@ def test_scene_grants_if_one_authorized_region_exists():
     simulated = simulate_authorize(scene)
     assert simulated["state"] == "SIMULATED" and simulated["physical_open"] is False
     assert set(validate_permissions(default_permissions())) == set(PEOPLE)
+
+
+def test_strict_policy_denies_when_anyone_is_not_authorized():
+    granted = decide(face_count=1, candidate="K01", accepted=True, permission_active=True)
+    stranger = decide(face_count=1, candidate=None, accepted=False, permission_active=False)
+    mixed = decide_scene([granted, stranger]) | {"regions": [granted, stranger]}
+    strict = require_everyone_authorized(mixed)
+    assert strict["outcome"] == DENIED and strict["reason"] == "unauthorized_present"
+    alone = decide_scene([granted]) | {"regions": [granted]}
+    assert require_everyone_authorized(alone)["outcome"] == GRANTED
+    simulate_authorize(strict)

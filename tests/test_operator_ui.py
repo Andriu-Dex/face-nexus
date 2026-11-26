@@ -1,3 +1,4 @@
+from types import SimpleNamespace
 import json
 from pathlib import Path
 import tkinter as tk
@@ -648,3 +649,30 @@ def test_technical_lines_keep_access_unknown():
     text = technical_lines(scene, {"K01": "Alpha"})
     assert "Candidato diagnóstico" in text
     assert "Identidad de acceso: Desconocido" in text
+
+
+def test_rearm_reopens_invalidated_port_and_strict_rule_denies_mixed_scene(tmp_path, monkeypatch):
+    opened = []
+    monkeypatch.setattr("scripts.operator_ui.open_latch_port", lambda port: opened.append(port) or SimpleNamespace(close=lambda: None))
+    monkeypatch.setattr("scripts.operator_ui.ping_firmware", lambda connection: "PONG FACENEXUS LATCH 1")
+    monkeypatch.setattr("scripts.operator_ui.set_hold", lambda connection, seconds: "HOLD ACK")
+
+    def mixed(_frame, _permissions):
+        regions = [{"outcome": "GRANTED", "reason": "authorized", "identity": "K01"},
+                   {"outcome": "DENIED", "reason": "unknown_identity", "identity": "UNKNOWN"}]
+        return {**regions[0], "event_id": "1", "regions": regions}
+
+    app = OperatorApp(mixed, port="COM9", config_path=tmp_path / "cam.json")
+    app.window.withdraw()
+    app._invalidate_port()
+    assert app.connection is None and not app.gate.can_send
+    app._rearm()
+    assert opened == ["COM9", "COM9"] and app.latch_ok and app.gate.can_send
+    frame = np.zeros((40, 40, 3), np.uint8)
+    assert app.recognize_frame(frame)["outcome"] == "GRANTED"
+    app.policy_var.set("all")
+    app.frames_var.set("5")
+    app._apply_rules()
+    assert app.gate.consensus_frames == 5
+    assert app.recognize_frame(frame)["reason"] == "unauthorized_present"
+    app.window.destroy()

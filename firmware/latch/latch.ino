@@ -10,7 +10,10 @@ constexpr int OPEN_DEG = 0;
 constexpr int MIN_DEG = 0;
 constexpr int MAX_DEG = 180;
 // Si no llega otro GRANTED en este lapso, el propio ESP32 cierra (falla en modo cerrado).
-constexpr unsigned long HOLD_MS = 3000;
+// La PC puede ajustarlo con HOLD <ms>; tras un reinicio vuelve a 3 s.
+constexpr unsigned long HOLD_MIN_MS = 1000;
+constexpr unsigned long HOLD_MAX_MS = 15000;
+unsigned long holdMs = 3000;
 bool isOpen = false;
 unsigned long lastGrantMs = 0;
 char line[80];
@@ -37,7 +40,7 @@ void openOrRenew() {
 }
 
 void closeIfExpired() {
-    if (isOpen && millis() - lastGrantMs >= HOLD_MS) {
+    if (isOpen && millis() - lastGrantMs >= holdMs) {
         writeAngle(CLOSED_DEG);
         isOpen = false;
     }
@@ -51,6 +54,20 @@ void handleLine(char* input) {
 
     if (strcmp(input, "SERVO RANGE") == 0) {
         Serial.printf("SERVO RANGE %d %d\n", MIN_DEG, MAX_DEG);
+        return;
+    }
+
+    if (strncmp(input, "HOLD ", 5) == 0) {
+        const char* value = input + 5;
+        const unsigned long ms = strtoul(value, nullptr, 10);
+        if (strlen(value) == 0 || strlen(value) > 5
+                || strspn(value, "0123456789") != strlen(value)
+                || ms < HOLD_MIN_MS || ms > HOLD_MAX_MS) {
+            Serial.println("ERROR BAD_HOLD");
+            return;
+        }
+        holdMs = ms;
+        Serial.printf("HOLD ACK %lu\n", holdMs);
         return;
     }
 

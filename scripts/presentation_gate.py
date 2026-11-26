@@ -25,7 +25,9 @@ def scene_kind(scene):
 
 
 class PresentationGate:
-    def __init__(self):
+    def __init__(self, consensus_frames=CONSENSUS_FRAMES):
+        # El operador puede cambiarla en vivo; 8 es el valor con el que se midieron los rechazos.
+        self.consensus_frames = consensus_frames
         self.can_send = True
         self.last_sent = None
         self.streak = 0
@@ -57,7 +59,7 @@ class PresentationGate:
         Un fotograma sin autorizado no envía nada: el silencio basta para que el ESP32 cierre.
         """
         self.streak = self.streak + 1 if kind == AUTHORIZED else 0
-        if self.streak < CONSENSUS_FRAMES or not self.can_send:
+        if self.streak < self.consensus_frames or not self.can_send:
             return False
         now = monotonic() if now is None else now
         if self.last_sent is not None and now - self.last_sent < HEARTBEAT_SECONDS:

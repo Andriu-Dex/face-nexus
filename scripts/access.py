@@ -15,7 +15,7 @@ DENIED = "DENIED"
 UNKNOWN = "UNKNOWN"
 REASONS = (
     "no_face", "multiple_faces", "not_human", "unknown_identity", "permission_inactive",
-    "model_unavailable", "exception", "authorized",
+    "model_unavailable", "exception", "authorized", "unauthorized_present",
 )
 
 
@@ -73,6 +73,15 @@ def decide_scene(regions):
     granted = [row for row in regions if row["outcome"] == GRANTED]
     chosen = granted[0] if granted else regions[0]
     return {**chosen, "event_id": uuid4().hex[:16]}
+
+
+def require_everyone_authorized(scene):
+    """Regla estricta opcional: un rostro no autorizado en la escena deniega aunque haya un integrante."""
+    if scene["outcome"] != GRANTED:
+        return scene
+    if all(row["outcome"] == GRANTED for row in scene.get("regions") or []):
+        return scene
+    return {**scene, "outcome": DENIED, "reason": "unauthorized_present", "identity": UNKNOWN}
 
 
 def simulate_authorize(decision):

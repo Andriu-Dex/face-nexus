@@ -7,7 +7,10 @@ from scripts.hog_knn import PEOPLE
 
 LATCH_PONG = "PONG FACENEXUS LATCH 1"
 BENCH_PONG = "PONG FACENEXUS BENCH 1"
-PROTOCOL_PREFIXES = ("ACK", "ERROR", "SERVO")
+PROTOCOL_PREFIXES = ("ACK", "ERROR", "SERVO", "HOLD")
+# Tiempo que el ESP32 espera sin renovación antes de cerrar solo (mismos límites que el firmware).
+HOLD_MIN_SECONDS = 1
+HOLD_MAX_SECONDS = 15
 
 
 def read_line(connection):
@@ -86,6 +89,15 @@ def send_decision(connection, event_id, identity, decision):
         "pulse_confirmed": ack == expected and suffix == "ACTUATED",
         "state": "ACTUATED" if suffix == "ACTUATED" else "CLOSED",
     }
+
+
+def set_hold(connection, seconds):
+    """Cambia el cierre autónomo del ESP32. El cierre sigue dependiendo del firmware, no de la PC."""
+    if type(seconds) is not int or not HOLD_MIN_SECONDS <= seconds <= HOLD_MAX_SECONDS:
+        raise ValueError(f"El cierre debe estar entre {HOLD_MIN_SECONDS} y {HOLD_MAX_SECONDS} s.")
+    milliseconds = seconds * 1000
+    connection.write(f"HOLD {milliseconds}\n".encode("ascii"))
+    return read_ack(connection, f"HOLD ACK {milliseconds}")
 
 
 SERVO_CLOSED = 100
