@@ -129,6 +129,24 @@ RESULT_TABLES = (
       ("Vista en vivo", "13 a 14 fps"),
       ("Personas no calibradas en el ensayo en vivo", "8/8 rechazadas"))),
 )
+# Conclusión de cada comparación: qué se eligió y por qué, con las cifras de la propia tabla.
+RESULT_CHOICES = {
+    "Entrenamiento de la CNN propia":
+        "Elegida: corrida 1. La 2 fue mejor con caras sintéticas, pero con el celular "
+        "aceptó 14/999 desconocidos frente a 2/999.",
+    "Extractor: HOG frente a la CNN propia":
+        "Elegida: CNN propia. Reconoce más integrantes que HOG (68/75 frente a 43/75) "
+        "y acepta menos desconocidos (2/999 frente a 10/999).",
+    "Clasificadores sobre la CNN propia":
+        "Elegido: k-NN. La SVM reconoce casi igual (69/75), pero acepta 5 veces más "
+        "desconocidos (10/999 frente a 2/999). Abrir a un desconocido es el error más caro.",
+    "Influencia de cada parte: CNN propia y SFace":
+        "Elegida: 75 % CNN propia + 25 % SFace. Recupera integrantes (74/75 frente a 68/75) "
+        "y acepta menos desconocidos que cuando SFace pesa más.",
+    "Recalibración con desconocidos reales":
+        "Elegida: 75 % + 25 %. Ningún desconocido abre y es la que más integrantes acepta sin "
+        "abrir a desconocidos; con 50 % de SFace, una desconocida ya abriría.",
+}
 # Arquitectura de FaceNet (scripts/train_face_cnn.py) para la pestaña «Red neuronal».
 # (nombre, canales, lado en píxeles, operación, forma de los pesos, parámetros entrenables).
 # Parámetros = 9·cin·cout por convolución + 2·cout por normalización; lineal = 4096·128 + 128.
@@ -997,11 +1015,18 @@ class OperatorApp:
                            text="Alto: lado de la imagen (64 → 4 píxeles). Ancho: número de filtros "
                                 "(1 → 256). Al final, un vector de 128 que el k-NN compara.")
 
+    def _wrapping_label(self, parent, text, font, color):
+        """Etiqueta que ajusta su ancho de línea al de la columna, para que no se corte."""
+        label = tk.Label(parent, text=text, font=font, fg=color, bg=SURFACE, anchor="w",
+                         justify="left", wraplength=400)
+        parent.bind("<Configure>", lambda event: label.config(wraplength=max(200, event.width - 30)),
+                    add="+")
+        return label
+
     def _result_table(self, parent, title, note, headers, rows):
         frame = self._section(parent, title)
         if note:
-            tk.Label(frame, text=note, font=self._font(8), fg=WAIT_INK, bg=SURFACE, anchor="w",
-                     justify="left", wraplength=560).pack(anchor="w", pady=(0, 6))
+            self._wrapping_label(frame, note, self._font(8), WAIT_INK).pack(anchor="w", pady=(0, 6))
         grid = tk.Frame(frame, bg=SURFACE)
         grid.pack(fill="x")
         grid.columnconfigure(0, weight=1)
@@ -1014,8 +1039,14 @@ class OperatorApp:
             for column, text in enumerate(row):
                 tk.Label(grid, text=text, font=self._font(9, bold=in_use),
                          fg=ACCENT if in_use else INK, bg=SURFACE,
+                         # La primera columna puede partirse en dos líneas en pantallas angostas.
+                         wraplength=190 if column == 0 else 0, justify="left",
                          anchor="w" if column == 0 else "e").grid(
                     row=row_index, column=column, sticky="ew", padx=(0, 10), pady=1)
+        choice = RESULT_CHOICES.get(title)
+        if choice:
+            self._wrapping_label(frame, choice, self._font(9, bold=True), ACCENT).pack(
+                anchor="w", pady=(8, 0))
 
     def _build_servo_tab(self, page):
         panel = tk.Frame(page, bg=SURFACE, padx=24, pady=12)
