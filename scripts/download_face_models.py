@@ -1,4 +1,4 @@
-"""Descarga exclusivamente los dos ONNX revisados, comprobando licencia y hash."""
+"""Descarga exclusivamente los ONNX revisados, comprobando licencia y hash."""
 
 from datetime import datetime, timezone
 import hashlib
@@ -13,6 +13,9 @@ MODELS = {
               "8f2383e4dd3cfbb4553ea8718107fc0423210dc964f9f4280604804ed2552fa4", "MIT"),
     "sface": ("face_recognition_sface", "face_recognition_sface_2021dec.onnx", 38696353,
               "0ba9fbfa01b5270c96627c4ef784da859931e02f04419c829e83484087c34e79", "Apache 2.0"),
+    # Apoyo opcional: objetos y rostros en pantallas. No interviene en la identidad.
+    "nanodet": ("object_detection_nanodet", "object_detection_nanodet_2022nov.onnx", 3800954,
+                "4b82da9944b88577175ee23a459dce2e26e6e4be573def65b1055dc2d9720186", "Apache 2.0"),
 }
 
 
@@ -25,8 +28,12 @@ def fetch(url):
 def main():
     root = Path(__file__).resolve().parents[1] / "models/verified"
     root.mkdir(parents=True, exist_ok=True)
+    registry_path = root / "registry.json"
+    # Un registro previo se amplía: los modelos ya verificados conservan su evidencia.
+    previous = json.loads(registry_path.read_text(encoding="utf-8")) if registry_path.exists() else {}
     registry = {"repository": "https://github.com/opencv/opencv_zoo", "revision": REVISION,
-                "verified_at": datetime.now(timezone.utc).isoformat(), "models": {}}
+                "verified_at": datetime.now(timezone.utc).isoformat(),
+                "models": previous.get("models", {})}
     for name, (folder, filename, size, digest, license_name) in MODELS.items():
         raw = f"https://raw.githubusercontent.com/opencv/opencv_zoo/{REVISION}/models/{folder}/"
         readme = fetch(raw + "README.md")
@@ -59,8 +66,7 @@ def main():
                                      "license_sha256": hashlib.sha256(license_text).hexdigest(),
                                      "published_pointer_verified": True, "local_hash_verified": True}
         print(f"{name}: {size} bytes; hash verificado", flush=True)
-    with (root / "registry.json").open("x", encoding="utf-8") as file:
-        json.dump(registry, file, indent=2)
+    registry_path.write_text(json.dumps(registry, indent=2), encoding="utf-8")
 
 
 if __name__ == "__main__":

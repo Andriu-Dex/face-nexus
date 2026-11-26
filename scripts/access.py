@@ -16,6 +16,7 @@ UNKNOWN = "UNKNOWN"
 REASONS = (
     "no_face", "multiple_faces", "not_human", "unknown_identity", "permission_inactive",
     "model_unavailable", "exception", "authorized", "unauthorized_present",
+    "face_on_screen",
 )
 
 

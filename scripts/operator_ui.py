@@ -14,7 +14,9 @@ import math
 
 import cv2
 
-from scripts.access import default_permissions, require_everyone_authorized, simulate_authorize
+from scripts.access import (
+    decide_scene, default_permissions, require_everyone_authorized, simulate_authorize,
+)
 from scripts.calibrate_hog import ROTATE
 from scripts.dataset_capture import verify_vault
 from scripts.face_pipeline import load_detector, load_models
@@ -25,6 +27,7 @@ from scripts.latch_serial import (
 )
 from scripts.live_k01 import HUMAN_RUN, build_identify, face_descriptor, load_keras, paint_regions, recognize_frame
 from scripts.phone_serial_bench import local_stream_url
+from scripts.object_detector import detect_objects, inside_screen, load_object_detector
 from scripts.presentation_gate import PresentationGate, scene_kind
 
 
@@ -63,6 +66,8 @@ RECENT_CAMERAS = 3
 # L\u00EDmites de las reglas de apertura. El cierre m\u00EDnimo supera con margen el latido de 0,5 s:
 # con un cierre igual o menor el ESP32 cerrar\u00EDa entre dos renovaciones.
 FRAMES_MIN, FRAMES_MAX = 3, 60
+# Solo para mostrar objetos, NanoDet corre en uno de cada OBJECT_EVERY fotogramas.
+OBJECT_EVERY = 4
 LATCH_HOLD_SECONDS = 3
 PIPELINE_STEPS = (
     ("phone", "Celular (captura)"),
@@ -166,6 +171,7 @@ SPANISH = {
     "stale_measurement": "sin medición reciente",
     "unauthorized_present": "hay una persona no autorizada en la escena",
     "camera_signal_lost": "se perdió la señal de la cámara",
+    "face_on_screen": "el rostro está dentro de una pantalla",
 }
 
 
@@ -464,6 +470,8 @@ def face_style(item):
         return ACCENT_SOFT, "Autorizado"
     if item.get("reason") == "permission_inactive":
         return AMBER, "Permiso revocado"
+    if item.get("reason") == "face_on_screen":
+        return REJECT, "Rostro en una pantalla"
     return REJECT, "Desconocido"
 
 
@@ -485,7 +493,7 @@ def overlay_boxes(scene):
 class OperatorApp:
     def __init__(self, recognize, *, model_ready=True, reason="", url="", rotation=0,
                  port=None, labels=None, config_path=None, open_capture=None,
-                 trial_info=None, model_loader=None, actuate=False):
+                 trial_info=None, model_loader=None, actuate=False, models_dir=None):
         self._core = recognize
         # Sin --actuate la interfaz nunca envía órdenes físicas desde el reconocimiento.
         self.actuate = actuate is True and bool(port)
@@ -520,6 +528,14 @@ class OperatorApp:
         # Reglas de apertura ajustables por el operador (sección «Reglas de apertura»).
         self.hold_seconds = LATCH_HOLD_SECONDS
         self.require_everyone = False
+        # Detector de objetos preentrenado, opcional y apagado por defecto (se carga al activarlo).
+        self.models_dir = Path(models_dir or "models/verified")
+        self.object_net = None
+        self.show_objects = False
+        self.block_screens = False
+        self._objects = []
+        self._object_frames = 0
+        self._object_lock = threading.Lock()
         self.hold_note = ""
         # Motivo del bloqueo del pestillo, visible en el panel hasta que el operador rearme.
         self.block_reason = ""
@@ -998,13 +1014,13 @@ class OperatorApp:
                     row=row_index, column=column, sticky="ew", padx=(0, 10), pady=1)
 
     def _build_servo_tab(self, page):
-        panel = tk.Frame(page, bg=SURFACE, padx=24, pady=20)
+        panel = tk.Frame(page, bg=SURFACE, padx=24, pady=12)
         panel.pack(anchor="nw", fill="x", padx=16, pady=16)
         tk.Label(panel, text="Pestillo · ESP32 + servomotor SG90", font=self._font(18, bold=True),
                  bg=SURFACE, fg=INK).pack(anchor="w")
         tk.Label(
             panel, justify="left", anchor="w", bg=SURFACE, fg=WAIT_INK, font=self._font(10),
-            wraplength=760,
+            wraplength=1500,
             text=("Nodo de actuación del sistema. Windows envía por USB serie la etiqueta "
                   "«CHECK <evento> <K01–K04> GRANTED» mientras haya un integrante autorizado, "
                   "renovándola cada 0,5 s. El ESP32 abre a "
@@ -1043,7 +1059,7 @@ class OperatorApp:
         ttk.Label(panel, textvariable=self.servo_status, wraplength=680).pack(anchor="w")
 
         # Reglas de apertura: viven junto al pestillo porque gobiernan cuándo se le envía la orden.
-        rules = tk.Frame(page, bg=SURFACE, padx=24, pady=20)
+        rules = tk.Frame(page, bg=SURFACE, padx=24, pady=12)
         rules.pack(anchor="nw", fill="x", padx=16, pady=(0, 16))
         tk.Label(rules, text="REGLAS DE APERTURA", font=self._font(8, bold=True), fg=WAIT_INK,
                  bg=SURFACE).pack(anchor="w", pady=(0, 6))
@@ -1072,9 +1088,29 @@ class OperatorApp:
             box.bind("<KP_Enter>", lambda _event: self._apply_rules())
             box.bind("<FocusOut>", lambda _event: self._apply_rules())
         self.rules_lbl = tk.Label(rules, text="", font=self._font(8), fg=WAIT_INK, bg=SURFACE,
-                                  anchor="w", justify="left", wraplength=760)
+                                  anchor="w", justify="left", wraplength=1500)
         self.rules_lbl.pack(anchor="w", pady=(6, 0))
         self._describe_rules()
+
+        objects = tk.Frame(page, bg=SURFACE, padx=24, pady=12)
+        objects.pack(anchor="nw", fill="x", padx=16, pady=(0, 16))
+        tk.Label(objects, text="DETECTOR DE OBJETOS (OPCIONAL)", font=self._font(8, bold=True),
+                 fg=WAIT_INK, bg=SURFACE).pack(anchor="w", pady=(0, 6))
+        self.objects_var = tk.BooleanVar(value=False)
+        self.screens_var = tk.BooleanVar(value=False)
+        for text, variable in (
+                ("Mostrar objetos en el video (celular, laptop, botella...)", self.objects_var),
+                ("Rechazar rostros dentro de una pantalla (celular, laptop o televisor)",
+                 self.screens_var)):
+            tk.Checkbutton(objects, text=text, variable=variable, command=self._toggle_objects,
+                           font=self._font(9), fg=INK, bg=SURFACE, activebackground=SURFACE,
+                           selectcolor=SURFACE, anchor="w").pack(anchor="w")
+        tk.Label(objects, font=self._font(8), fg=WAIT_INK, bg=SURFACE, anchor="w",
+                 justify="left", wraplength=1500,
+                 text="NanoDet-Plus, preentrenado con las 80 clases de COCO (OpenCV Zoo, Apache 2.0, "
+                      "hash verificado). No es un modelo del proyecto ni interviene en la identidad. "
+                      "Tarda unos 100 ms por fotograma: al rechazar pantallas baja la velocidad del "
+                      "video. No detecta fotos impresas.").pack(anchor="w", pady=(6, 0))
 
     def _set_status(self, text):
         self.status.config(text=text)
@@ -1121,6 +1157,15 @@ class OperatorApp:
         src_h, src_w = layer["size"]
         if src_w < 1 or src_h < 1:
             return
+        for item in layer.get("objects", ()):
+            left, top, right, bottom = item["box"]
+            x0, y0 = origin_x + left * shown_w / src_w, origin_y + top * shown_h / src_h
+            x1, y1 = origin_x + right * shown_w / src_w, origin_y + bottom * shown_h / src_h
+            self.viewer.create_rectangle(x0, y0, x1, y1, outline=HINT, width=2, dash=(6, 4),
+                                         tags="box")
+            self.viewer.create_text(x0 + 6, y0 + 4, anchor="nw", fill=SURFACE,
+                                    font=self._font(9, bold=True), tags="box",
+                                    text=f"{item['label']} {item['score']:.0%}")
         for item in layer["boxes"]:
             left, top, right, bottom = item["box"]
             x0 = origin_x + left * shown_w / src_w
@@ -1130,9 +1175,11 @@ class OperatorApp:
             color, status = face_style(item)
             self._draw_brackets(x0, y0, x1, y1, color)
             name = display_person(item["identity"], self.labels)
+            origin = ("Dentro de una pantalla (NanoDet)" if item.get("reason") == "face_on_screen"
+                      # YuNet confirma el rostro humano en vivo; la CNN binaria va al detalle técnico.
+                      else "Rostro humano (YuNet)")
             lines = [(name, self._font(11, bold=True)), (status, self._font(9)),
-                     # YuNet confirma el rostro humano en vivo; la CNN binaria va al detalle técnico.
-                     ("Rostro humano (YuNet)", self._font(8))]
+                     (origin, self._font(8))]
             self._draw_tag(x0, y0, x1, lines, color)
 
     def _draw_brackets(self, x0, y0, x1, y1, color):
@@ -1726,9 +1773,11 @@ class OperatorApp:
         self.metrics["infer_ms"] = result["infer_ms"]
         self._commit_scene(result["scene"], "camera", captured_at=result["captured_at"])
         boxes = overlay_boxes(result["scene"])
-        if boxes:
+        objects = result["scene"].get("objects") or []
+        if boxes or objects:
             self._overlay = {
                 "boxes": boxes,
+                "objects": objects,
                 "until": now + BOX_TTL,
                 "gen": self._cam_gen,
                 "size": result["size"],
@@ -1805,7 +1854,49 @@ class OperatorApp:
 
     def recognize_frame(self, frame):
         scene = self._core(frame, self.permissions)
+        if self.object_net is not None and (self.show_objects or self.block_screens):
+            scene = self._apply_objects(scene, frame)
         return require_everyone_authorized(scene) if self.require_everyone else scene
+
+    def _apply_objects(self, scene, frame):
+        """Agrega los objetos detectados y, si se pidió, rechaza rostros dentro de pantallas."""
+        with self._object_lock:
+            self._object_frames += 1
+            # Solo para mostrar basta un fotograma de cada OBJECT_EVERY (NanoDet tarda ~100 ms);
+            # para rechazar pantallas se detecta en cada fotograma: no se decide con datos viejos.
+            if self.block_screens or self._object_frames % OBJECT_EVERY == 1:
+                self._objects = detect_objects(self.object_net, frame)
+            objects = list(self._objects)
+        # La persona entera ya está representada por su rostro; se omite para no saturar el video.
+        scene = {**scene, "objects": [item for item in objects if item["label"] != "persona"]}
+        if not self.block_screens:
+            return scene
+        regions = [
+            {**row, "outcome": "DENIED", "reason": "face_on_screen"}
+            if row["outcome"] == "GRANTED" and row.get("box") and inside_screen(row["box"], objects)
+            else row
+            for row in scene.get("regions") or []]
+        if not regions:
+            return scene
+        decided = decide_scene([{key: row[key] for key in ("outcome", "reason", "identity")}
+                                for row in regions])
+        return {**scene, **decided, "regions": regions}
+
+    def _toggle_objects(self):
+        """Carga NanoDet la primera vez; si falta el archivo, deja ambas opciones apagadas."""
+        wanted = self.objects_var.get() or self.screens_var.get()
+        if wanted and self.object_net is None:
+            try:
+                self.object_net = load_object_detector(self.models_dir)
+            except (OSError, cv2.error) as error:
+                self.objects_var.set(False)
+                self.screens_var.set(False)
+                messagebox.showwarning("Detector de objetos", str(error), parent=self.window)
+        self.show_objects = bool(self.objects_var.get())
+        self.block_screens = bool(self.screens_var.get())
+        # Una regla nueva exige una racha nueva.
+        self.gate.interrupt()
+        self._ui_streak = 0
 
     def _commit_scene(self, scene, source, captured_at=None):
         simulate_authorize({
@@ -2021,7 +2112,7 @@ def main():
         rotation=args.rotation, port=args.port or None,
         labels=load_identity_labels(vault), trial_info=info,
         model_loader=lambda trial: build_recognizer(vault, args.models, trial),
-        actuate=args.actuate)
+        actuate=args.actuate, models_dir=args.models)
     app.run()
 
 
