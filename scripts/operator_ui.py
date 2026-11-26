@@ -123,6 +123,17 @@ RESULT_TABLES = (
       ("Vista en vivo", "13 a 14 fps"),
       ("Personas no calibradas en el ensayo en vivo", "8/8 rechazadas"))),
 )
+# Arquitectura de FaceNet (scripts/train_face_cnn.py) para la pestaña «Red neuronal».
+# (nombre, canales, lado en píxeles, operación, forma de los pesos, parámetros entrenables).
+# Parámetros = 9·cin·cout por convolución + 2·cout por normalización; lineal = 4096·128 + 128.
+NETWORK_LAYERS = (
+    ("Entrada", 1, 64, "Rostro recortado por YuNet, gris, ecualizado", "—", 0),
+    ("Bloque 1", 32, 32, "2 × (conv 3×3 + BN + ReLU), max pooling 2×2", "3×3×1×32 y 3×3×32×32", 9632),
+    ("Bloque 2", 64, 16, "2 × (conv 3×3 + BN + ReLU), max pooling 2×2", "3×3×32×64 y 3×3×64×64", 55552),
+    ("Bloque 3", 128, 8, "2 × (conv 3×3 + BN + ReLU), max pooling 2×2", "3×3×64×128 y 3×3×128×128", 221696),
+    ("Bloque 4", 256, 4, "2 × (conv 3×3 + BN + ReLU), max pooling 2×2", "3×3×128×256 y 3×3×256×256", 885760),
+    ("Vector", 128, 1, "Aplanar 4096 → dropout 0,2 → y = W·x + b → BN", "W: 4096×128, b: 128", 524672),
+)
 MAP_PARTS = ("private", "identity_labels.json")
 NAME_MAP = Path(__file__).resolve().parents[1] / "private" / "external_frames_mapping_20261117.json"
 DEFAULT_VAULT = Path("V:/FaceNexus")
@@ -747,6 +758,9 @@ class OperatorApp:
         technical = tk.Frame(tabs, bg=BG)
         tabs.add(technical, text="Datos técnicos")
         self._build_tech_tab(technical)
+        network = tk.Frame(tabs, bg=BG)
+        tabs.add(network, text="Red neuronal")
+        self._build_network_tab(network)
         self._refresh_hw()
         self._refresh_live_panel()
         self._paint_viewer()
@@ -880,6 +894,88 @@ class OperatorApp:
         tk.Label(columns[1], text="* variante en uso. Cifras medidas y registradas en el informe.",
                  font=self._font(8), fg=WAIT_INK, bg=BG).pack(anchor="w", pady=(8, 0))
         self._refresh_tech()
+
+    def _build_network_tab(self, page):
+        """Explica la CNN propia: diagrama de capas, pesos, parámetros y entrenamiento."""
+        page.columnconfigure(0, weight=1)
+        page.rowconfigure(0, weight=1)
+        diagram = self._section(page, "CNN propia de identidad (PyTorch, entrenada desde cero)")
+        diagram.pack_configure(fill="both", expand=True)
+        self.network_canvas = tk.Canvas(diagram, bg=SURFACE, highlightthickness=0, height=300)
+        self.network_canvas.pack(fill="both", expand=True)
+        self.network_canvas.bind("<Configure>", lambda _event: self._draw_network())
+
+        bottom = tk.Frame(page, bg=BG)
+        bottom.pack(fill="x")
+        bottom.columnconfigure(0, weight=3)
+        bottom.columnconfigure(1, weight=2)
+        layers = tk.Frame(bottom, bg=BG)
+        layers.grid(row=0, column=0, sticky="nsew", padx=(0, 12))
+        rows = [(name, f"{channels}×{side}×{side}" if side > 1 else str(channels), operation,
+                 weights, f"{params:,}".replace(",", " ") if params else "—")
+                for name, channels, side, operation, weights, params in NETWORK_LAYERS]
+        total = sum(layer[5] for layer in NETWORK_LAYERS)
+        rows.append(("Total en uso *", "rostro → 128", "", "", f"{total:,}".replace(",", " ")))
+        self._result_table(layers, "Capas, pesos y parámetros",
+                           "Cada convolución tiene un filtro de 3×3 por canal de entrada y de salida.",
+                           ("Capa", "Salida", "Operación", "Pesos", "Parámetros"), rows)
+        explain = tk.Frame(bottom, bg=BG)
+        explain.grid(row=0, column=1, sticky="nsew")
+        training = self._section(explain, "Cómo aprendió")
+        tk.Label(training, font=self._font(9), fg=INK, bg=SURFACE, anchor="w", justify="left",
+                 wraplength=600,
+                 text="• Cada filtro de 3×3 recorre la imagen y responde a un patrón: los primeros "
+                      "bloques detectan bordes, los siguientes partes del rostro y los últimos "
+                      "rasgos que distinguen a una persona.\n"
+                      "• Cada bloque reduce la imagen a la mitad y duplica los filtros.\n"
+                      "• La última capa es y = W·x + b: convierte 4096 valores en un vector de 128, "
+                      "la «huella» del rostro.\n"
+                      "• Para entrenar se agregó una capa CosFace de 128 × 5000 (una neurona por "
+                      "identidad sintética de HyperFace, s = 30, m = 0,35). Obliga a que la huella "
+                      "quede más cerca de su identidad que de cualquier otra, con margen. Al terminar "
+                      "se descarta: el k-NN compara huellas.\n"
+                      "• 259 980 imágenes, 10 épocas de unos 50 s, AdamW, lotes de 256. "
+                      "Pérdida 15,57 → 1,74; TAR@FAR 1 % en identidades no vistas: 81,9 % → 99,0 %.\n"
+                      "• Se exporta a ONNX y se ejecuta con OpenCV en 22 a 33 ms por fotograma."
+                 ).pack(anchor="w")
+
+    def _draw_network(self):
+        """Cada capa es un prisma: alto según el lado de la imagen, ancho según los canales."""
+        canvas = self.network_canvas
+        canvas.delete("all")
+        width = max(canvas.winfo_width(), 200)
+        height = max(canvas.winfo_height(), 200)
+        slot = width / len(NETWORK_LAYERS)
+        top_space = 60
+        previous_right = None
+        usable = height - top_space - 70
+        for index, (name, channels, side, _operation, _weights, _params) in enumerate(NETWORK_LAYERS):
+            # Escala logarítmica para que 4×4 y 64×64 se vean a la vez.
+            box_h = max(14, usable * (math.log2(side) + 1) / 7)
+            box_w = 14 + 12 * math.log2(channels) if side > 1 else 22
+            center_x = slot * index + slot / 2
+            center_y = top_space + usable / 2
+            x0, y0 = center_x - box_w / 2, center_y - box_h / 2
+            depth = min(18, box_h / 4)
+            fill = ACCENT_SOFT if 0 < index < len(NETWORK_LAYERS) - 1 else ACCENT
+            canvas.create_polygon(x0, y0, x0 + depth, y0 - depth, x0 + box_w + depth, y0 - depth,
+                                  x0 + box_w, y0, fill=TRACK, outline=INK)
+            canvas.create_polygon(x0 + box_w, y0, x0 + box_w + depth, y0 - depth,
+                                  x0 + box_w + depth, y0 + box_h - depth, x0 + box_w, y0 + box_h,
+                                  fill=HINT, outline=INK)
+            canvas.create_rectangle(x0, y0, x0 + box_w, y0 + box_h, fill=fill, outline=INK)
+            shape = f"{channels}×{side}×{side}" if side > 1 else f"{channels} valores"
+            canvas.create_text(center_x, top_space - 40, text=name, fill=INK,
+                               font=self._font(10, bold=True))
+            canvas.create_text(center_x, top_space + usable + 22, text=shape, fill=INK,
+                               font=self._font(10))
+            if previous_right is not None:
+                canvas.create_line(previous_right + 10, center_y, x0 - 10, center_y,
+                                   arrow=tk.LAST, fill=WAIT_INK, width=2)
+            previous_right = x0 + box_w + depth
+        canvas.create_text(width / 2, height - 18, fill=WAIT_INK, font=self._font(9),
+                           text="Alto: lado de la imagen (64 → 4 píxeles). Ancho: número de filtros "
+                                "(1 → 256). Al final, un vector de 128 que el k-NN compara.")
 
     def _result_table(self, parent, title, note, headers, rows):
         frame = self._section(parent, title)
