@@ -2,6 +2,7 @@ from types import SimpleNamespace
 import json
 from pathlib import Path
 import tkinter as tk
+from tkinter import ttk
 
 import cv2
 import numpy as np
@@ -12,7 +13,8 @@ from time import monotonic, sleep
 
 from scripts.operator_ui import (
     OperatorApp, decision_view, display_person, launch_preflight, load_camera_config,
-    load_identity_labels, parse_camera_url, save_camera_config, technical_lines,
+    clamp_number, load_identity_labels, parse_camera_url, remember_camera, save_camera_config,
+    technical_lines,
     trial_banner,
 )
 
@@ -675,4 +677,57 @@ def test_rearm_reopens_invalidated_port_and_strict_rule_denies_mixed_scene(tmp_p
     app._apply_rules()
     assert app.gate.consensus_frames == 5
     assert app.recognize_frame(frame)["reason"] == "unauthorized_present"
+    app.window.destroy()
+
+
+def test_recent_cameras_keep_last_three_without_repeats(tmp_path):
+    path = tmp_path / "cam.json"
+    urls = [parse_camera_url(f"192.168.1.{host}", "8080") for host in (1, 2, 3, 4)]
+    for url in urls:
+        assert remember_camera(url, 90, path) is True
+    remember_camera(urls[2], 0, path)
+    recent = load_camera_config(path)["recent"]
+    assert [item["url"] for item in recent] == [urls[2], urls[3], urls[1]]
+    assert recent[0]["rotation"] == 0
+    save_camera_config(urls[0], "192.168.1.1", "8080", 0, path)
+    assert len(load_camera_config(path)["recent"]) == 3
+
+
+def test_quick_connect_uses_saved_camera_and_dialog_lists_history(app, monkeypatch):
+    started = []
+    monkeypatch.setattr(app, "_start_camera", lambda: started.append(app.url))
+    app.url = parse_camera_url("192.168.1.20", "8080")
+    app._quick_connect()
+    assert started == [app.url]
+    remember_camera(parse_camera_url("192.168.100.3", "8080"), 90, app.config_path)
+    app._camera_dialog()
+    dialog = next(widget for widget in app.window.winfo_children()
+                  if isinstance(widget, tk.Toplevel))
+    combo = next(widget for widget in dialog.winfo_children() if isinstance(widget, ttk.Combobox)
+                 and "192.168.100.3:8080 · 90°" in widget.cget("values"))
+    combo.set("192.168.100.3:8080 · 90°")
+    combo.event_generate("<<ComboboxSelected>>")
+    assert combo.get() == "192.168.100.3"
+    dialog.destroy()
+
+
+def test_typed_rules_are_clamped_and_block_is_explained(tmp_path, monkeypatch):
+    monkeypatch.setattr("scripts.operator_ui.open_latch_port", lambda port: SimpleNamespace(close=lambda: None))
+    monkeypatch.setattr("scripts.operator_ui.ping_firmware", lambda connection: "PONG FACENEXUS LATCH 1")
+    monkeypatch.setattr("scripts.operator_ui.set_hold", lambda connection, seconds: "HOLD ACK")
+    assert clamp_number("2,5", 1, 15, 3) == 2.5
+    assert clamp_number("abc", 1, 15, 3) == 3
+    assert clamp_number("nan", 1, 15, 3) == 3
+    assert clamp_number("0.2", 1, 15, 3) == 1
+    app = OperatorApp(fake_recognize(), port="COM9", actuate=True, config_path=tmp_path / "c.json")
+    app.window.withdraw()
+    app.frames_var.set("50")
+    app.hold_var.set("0,5")
+    app._apply_rules()
+    assert app.gate.consensus_frames == 50 and app.hold_seconds == 1.0
+    assert app.hold_var.get() == "1.0"
+    app._signal_lost()
+    app._refresh_live_panel()
+    assert "BLOQUEADO" in app.latch_state_lbl.cget("text")
+    assert "señal" in app.latch_note_lbl.cget("text")
     app.window.destroy()

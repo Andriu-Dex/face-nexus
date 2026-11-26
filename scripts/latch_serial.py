@@ -93,9 +93,9 @@ def send_decision(connection, event_id, identity, decision):
 
 def set_hold(connection, seconds):
     """Cambia el cierre autónomo del ESP32. El cierre sigue dependiendo del firmware, no de la PC."""
-    if type(seconds) is not int or not HOLD_MIN_SECONDS <= seconds <= HOLD_MAX_SECONDS:
+    if type(seconds) not in (int, float) or not HOLD_MIN_SECONDS <= seconds <= HOLD_MAX_SECONDS:
         raise ValueError(f"El cierre debe estar entre {HOLD_MIN_SECONDS} y {HOLD_MAX_SECONDS} s.")
-    milliseconds = seconds * 1000
+    milliseconds = round(seconds * 1000)
     connection.write(f"HOLD {milliseconds}\n".encode("ascii"))
     return read_ack(connection, f"HOLD ACK {milliseconds}")
 

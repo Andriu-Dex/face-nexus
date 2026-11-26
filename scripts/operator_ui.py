@@ -10,6 +10,7 @@ from urllib.parse import urlsplit, urlunsplit
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 import json
+import math
 
 import cv2
 
@@ -56,6 +57,12 @@ ICON_LOCK = "\uE72E"
 ICON_UNLOCK = "\uE785"
 ICON_WARNING = "\uE7BA"
 ICON_SHIELD = "\uEA18"
+ICON_EDIT = "\uE70F"
+# Conexiones del celular que se recuerdan en la ventana C\u00E1mara.
+RECENT_CAMERAS = 3
+# L\u00EDmites de las reglas de apertura. El cierre m\u00EDnimo supera con margen el latido de 0,5 s:
+# con un cierre igual o menor el ESP32 cerrar\u00EDa entre dos renovaciones.
+FRAMES_MIN, FRAMES_MAX = 3, 60
 LATCH_HOLD_SECONDS = 3
 PIPELINE_STEPS = (
     ("phone", "Celular (captura)"),
@@ -111,6 +118,7 @@ SPANISH = {
     "REARM": "Pestillo rearmado",
     "stale_measurement": "sin medición reciente",
     "unauthorized_present": "hay una persona no autorizada en la escena",
+    "camera_signal_lost": "se perdió la señal de la cámara",
 }
 
 
@@ -236,27 +244,66 @@ def load_camera_config(path=None):
         rotation = 0
     if rotation not in ROTATE:
         rotation = 0
+    raw_recent = payload.get("recent")
+    recent = [
+        {"url": item["url"], "rotation": item["rotation"]}
+        for item in (raw_recent if isinstance(raw_recent, list) else [])
+        if isinstance(item, dict) and isinstance(item.get("url"), str)
+        and item.get("rotation") in ROTATE
+    ][:RECENT_CAMERAS]
     return {
         "url": url.strip(),
         "ip": ip.strip(),
         "camera_port": str(port or DEFAULT_CAM_PORT),
         "rotation": rotation,
+        "recent": recent,
     }
+
+
+def _write_camera_config(payload, path):
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+        return True
+    except OSError:
+        return False
 
 
 def save_camera_config(url, ip, camera_port, rotation, path=None):
     path = Path(path or camera_config_path())
+    return _write_camera_config({
+        "url": url,
+        "ip": ip,
+        "camera_port": str(camera_port),
+        "rotation": int(rotation),
+        "recent": load_camera_config(path)["recent"],
+    }, path)
+
+
+def clamp_number(text, low, high, fallback):
+    """Lee un número escrito a mano (acepta coma decimal) y lo ajusta al rango [low, high]."""
     try:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps({
-            "url": url,
-            "ip": ip,
-            "camera_port": str(camera_port),
-            "rotation": int(rotation),
-        }, indent=2), encoding="utf-8")
-        return True
-    except OSError:
-        return False
+        value = float(str(text).strip().replace(",", "."))
+    except ValueError:
+        return fallback
+    if not math.isfinite(value):
+        return fallback
+    return min(max(value, low), high)
+
+
+def format_seconds(seconds):
+    # Punto decimal en el campo: las flechas del Spinbox de Tk no leen la coma.
+    return f"{seconds:.1f}"
+
+
+def remember_camera(url, rotation, path=None):
+    """Guarda una conexión que sí dio video; las más recientes primero, sin repetir."""
+    path = Path(path or camera_config_path())
+    config = load_camera_config(path)
+    recent = [{"url": url, "rotation": int(rotation)}] + [
+        item for item in config["recent"] if item["url"] != url]
+    config["recent"] = recent[:RECENT_CAMERAS]
+    return _write_camera_config(config, path)
 
 
 def split_camera_fields(url):
@@ -427,6 +474,8 @@ class OperatorApp:
         self.hold_seconds = LATCH_HOLD_SECONDS
         self.require_everyone = False
         self.hold_note = ""
+        # Motivo del bloqueo del pestillo, visible en el panel hasta que el operador rearme.
+        self.block_reason = ""
         self.ack_text = "sin acuse"
         self.lock_text = "posición no confirmada · simulación"
         self.permissions = default_permissions()
@@ -546,9 +595,13 @@ class OperatorApp:
 
         controls = tk.Frame(stage, bg=BG, pady=10)
         controls.grid(row=2, column=0, sticky="ew")
+        # Conectar usa la última cámara guardada; el lápiz abre la ventana para cambiarla.
         self.cam_btn = self._button(controls, "Conectar celular",
-                                    self._camera_dialog, primary=True)
+                                    self._quick_connect, primary=True)
         self.cam_btn.pack(side=tk.LEFT)
+        self.cam_edit_btn = self._button(controls, ICON_EDIT, self._camera_dialog, primary=True)
+        self.cam_edit_btn.config(font=(ICON_FONT, 12), padx=10)
+        self.cam_edit_btn.pack(side=tk.LEFT, fill="y", padx=(1, 0))
         self.stop_btn = self._button(controls, "Detener video", self._stop_camera)
         self.stop_btn.config(state="disabled")
         self.stop_btn.pack(side=tk.LEFT, padx=(8, 0))
@@ -619,6 +672,9 @@ class OperatorApp:
         self.latch_state_lbl = tk.Label(row, text="Cerrado", font=self._font(13, bold=True),
                                         fg=INK, bg=SURFACE, anchor="w", justify="left")
         self.latch_state_lbl.pack(side=tk.LEFT, fill="x")
+        self.latch_note_lbl = tk.Label(latch, text="", font=self._font(9, bold=True), fg=AMBER,
+                                       bg=SURFACE, anchor="w", justify="left", wraplength=320)
+        self.latch_note_lbl.pack(anchor="w")
         self.command_lbl = tk.Label(latch, text="Última etiqueta enviada: —", font=self._font(9),
                                     fg=WAIT_INK, bg=SURFACE, anchor="w", justify="left",
                                     wraplength=320)
@@ -633,15 +689,21 @@ class OperatorApp:
                            activebackground=SURFACE, selectcolor=SURFACE, anchor="w",
                            wraplength=300, justify="left").pack(anchor="w")
         self.frames_var = tk.StringVar(value=str(self.gate.consensus_frames))
-        self.hold_var = tk.StringVar(value=str(self.hold_seconds))
-        for text, variable, low, high in (
-                ("Fotogramas seguidos para abrir", self.frames_var, 3, 20),
-                ("Segundos para cerrar tras salir", self.hold_var, HOLD_MIN_SECONDS, HOLD_MAX_SECONDS)):
+        self.hold_var = tk.StringVar(value=format_seconds(self.hold_seconds))
+        # Se escriben a mano (Enter o salir del campo aplica) o con las flechas.
+        for text, variable, low, high, step in (
+                ("Fotogramas seguidos para abrir", self.frames_var, FRAMES_MIN, FRAMES_MAX, 1),
+                ("Segundos para cerrar tras salir", self.hold_var,
+                 HOLD_MIN_SECONDS, HOLD_MAX_SECONDS, 0.5)):
             line = tk.Frame(rules, bg=SURFACE)
             line.pack(fill="x", pady=(6, 0))
             tk.Label(line, text=text, font=self._font(9), fg=INK, bg=SURFACE).pack(side=tk.LEFT)
-            ttk.Spinbox(line, from_=low, to=high, width=4, textvariable=variable,
-                        state="readonly", command=self._apply_rules).pack(side=tk.RIGHT)
+            box = ttk.Spinbox(line, from_=low, to=high, increment=step, width=5,
+                              textvariable=variable, command=self._apply_rules)
+            box.pack(side=tk.RIGHT)
+            box.bind("<Return>", lambda _event: self._apply_rules())
+            box.bind("<KP_Enter>", lambda _event: self._apply_rules())
+            box.bind("<FocusOut>", lambda _event: self._apply_rules())
         self.rules_lbl = tk.Label(rules, text="", font=self._font(8), fg=WAIT_INK, bg=SURFACE,
                                   anchor="w", justify="left", wraplength=320)
         self.rules_lbl.pack(anchor="w", pady=(6, 0))
@@ -987,19 +1049,30 @@ class OperatorApp:
         fill = ACCENT if streak >= needed else ACCENT_SOFT
         self.streak_bar.create_rectangle(0, 0, width * streak / needed, 10,
                                          fill=fill, outline="")
-        if streak >= needed:
+        blocked = self.actuate and not self.gate.can_send
+        if streak >= needed and blocked:
+            text = "Identidad confirmada, pero el pestillo espera rearme"
+        elif streak >= needed:
             text = f"Identidad confirmada en {needed} fotogramas seguidos"
         elif streak:
             text = f"Verificando identidad… {streak}/{needed} fotogramas"
         else:
             text = f"Abre tras {needed} fotogramas autorizados seguidos"
         self.streak_lbl.config(text=text)
+        note = (f"Motivo: {self.block_reason or 'falla detectada'}. "
+                "Pulsa «Rearmar pestillo» para volver a enviar órdenes." if blocked else "")
+        if self.latch_note_lbl.cget("text") != note:
+            self.latch_note_lbl.config(text=note)
         remaining = self._latch_open_until - now
         if not self.actuate:
             self.latch_icon.config(text=ICON_LOCK, fg=WAIT_INK)
             self.latch_state_lbl.config(
                 text="Simulación\n" + ("abriría ahora" if streak >= needed
                                        else "no se envían órdenes"), fg=WAIT_INK)
+        elif blocked:
+            # Tras una falla no se envían órdenes; el ESP32 ya cerró solo por falta de renovación.
+            self.latch_icon.config(text=ICON_WARNING, fg=AMBER)
+            self.latch_state_lbl.config(text="BLOQUEADO", fg=AMBER)
         elif remaining > 0:
             self.latch_icon.config(text=ICON_UNLOCK, fg=ACCENT)
             self.latch_state_lbl.config(
@@ -1038,16 +1111,25 @@ class OperatorApp:
                 self._refresh_rearm()
                 return
         self.gate.rearm()
+        self.block_reason = ""
         self._record({"outcome": "REARM", "reason": "rearm", "identity": None}, "operador")
         self._refresh_rearm()
 
     def _apply_rules(self):
-        self.require_everyone = self.policy_var.get() == "all"
-        self.gate.consensus_frames = int(self.frames_var.get())
-        # Cambiar una regla exige una racha nueva medida con la regla nueva.
-        self.gate.interrupt()
-        self._ui_streak = 0
-        seconds = int(self.hold_var.get())
+        """Lee las reglas (escritas a mano o con flechas), las ajusta al rango y las aplica."""
+        require_everyone = self.policy_var.get() == "all"
+        frames = round(clamp_number(self.frames_var.get(), FRAMES_MIN, FRAMES_MAX,
+                                    self.gate.consensus_frames))
+        seconds = round(clamp_number(self.hold_var.get(), HOLD_MIN_SECONDS, HOLD_MAX_SECONDS,
+                                     self.hold_seconds), 1)
+        self.frames_var.set(str(frames))
+        self.hold_var.set(format_seconds(seconds))
+        if (require_everyone, frames) != (self.require_everyone, self.gate.consensus_frames):
+            self.require_everyone = require_everyone
+            self.gate.consensus_frames = frames
+            # Cambiar una regla exige una racha nueva medida con la regla nueva.
+            self.gate.interrupt()
+            self._ui_streak = 0
         if seconds != self.hold_seconds:
             self.hold_seconds = seconds
             self._push_hold()
@@ -1063,15 +1145,16 @@ class OperatorApp:
         except (OSError, RuntimeError, TimeoutError, ValueError):
             # Firmware anterior sin HOLD: sigue cerrando a los 3 s de fábrica.
             self.hold_seconds = LATCH_HOLD_SECONDS
-            self.hold_var.set(str(LATCH_HOLD_SECONDS))
+            self.hold_var.set(format_seconds(LATCH_HOLD_SECONDS))
             self.hold_note = ("El ESP32 no aceptó el cambio (carga el firmware actualizado); "
                               f"cierra a los {LATCH_HOLD_SECONDS} s.")
 
     def _describe_rules(self):
         frames = self.gate.consensus_frames
         seconds = f"{frames / 13:.1f}".replace(".", ",")
+        hold = format_seconds(self.hold_seconds).replace(".", ",")
         text = (f"Abre tras {frames} fotogramas autorizados seguidos (≈ {seconds} s a 13 fps). "
-                f"El ESP32 cierra solo {self.hold_seconds} s después del último autorizado.")
+                f"El ESP32 cierra solo {hold} s después del último autorizado.")
         if frames < 8:
             text += " Con menos de 8 fotogramas los rechazos de desconocidos no están medidos."
         if self.hold_note:
@@ -1110,8 +1193,16 @@ class OperatorApp:
         self.connection = None
         self.latch_ok = False
         self.gate.note_fault()
+        self.block_reason = "falla de comunicación con el ESP32"
         self.lock_text = "simulación · puerto invalidado"
         self._refresh_rearm()
+
+    def _quick_connect(self):
+        """Conecta a la última cámara usada; sin una guardada abre la ventana Cámara."""
+        if self.url:
+            self._start_camera()
+        else:
+            self._camera_dialog()
 
     def _camera_dialog(self):
         dialog = tk.Toplevel(self.window)
@@ -1123,8 +1214,22 @@ class OperatorApp:
         tk.Label(dialog, text="IP del celular", font=self._font(10), fg=INK, bg=SURFACE
                  ).pack(anchor="w", padx=16, pady=(16, 4))
         ip_var = tk.StringVar(value=ip_value or self.camera_ip)
-        entry = tk.Entry(dialog, textvariable=ip_var, width=42, font=self._font(10))
+        # La lista ofrece las últimas conexiones que dieron video; también se puede escribir.
+        recent = {}
+        for item in load_camera_config(self.config_path)["recent"]:
+            ip, port = split_camera_fields(item["url"])
+            recent[f"{ip}:{port} · {item['rotation']}°"] = (ip, port, item["rotation"])
+        entry = ttk.Combobox(dialog, textvariable=ip_var, values=list(recent), width=40,
+                             font=self._font(10))
         entry.pack(padx=16, fill="x")
+
+        def pick_recent(_event=None):
+            ip, port, rotation = recent[ip_var.get()]
+            ip_var.set(ip)
+            port_var.set(port)
+            rot_var.set(rotation)
+
+        entry.bind("<<ComboboxSelected>>", pick_recent)
         tk.Label(dialog, text="Puerto de cámara", font=self._font(10), fg=INK, bg=SURFACE
                  ).pack(anchor="w", padx=16, pady=(12, 4))
         port_var = tk.StringVar(value=port_value or str(DEFAULT_CAM_PORT))
@@ -1137,11 +1242,15 @@ class OperatorApp:
         rot.pack(padx=16, fill="x")
         note = tk.Label(
             dialog,
-            text="IP Webcam: 192.168.1.20 y puerto 8080, o 192.168.1.20:8080, o la URL completa. El puerto serie del pestillo es otro campo.",
+            text="IP Webcam: 192.168.1.20 y puerto 8080, o 192.168.1.20:8080, o la URL completa. "
+                 "Despliega la lista para usar una de las últimas conexiones. "
+                 "El puerto serie del pestillo es otro campo.",
             font=self._font(8), fg=WAIT_INK, bg=SURFACE, wraplength=360, justify="left")
         note.pack(anchor="w", padx=16, pady=8)
 
         def connect():
+            if ip_var.get() in recent:
+                pick_recent()
             try:
                 self.url = parse_camera_url(ip_var.get(), port_var.get())
             except ValueError as error:
@@ -1368,6 +1477,7 @@ class OperatorApp:
         Es una falla real (no la salida normal de una persona): exige rearme del operador.
         """
         self.gate.note_fault()
+        self.block_reason = "se perdió la señal de la cámara"
         self._preview_slot.clear()
         self._result_slot.clear()
         self._shown_seq = 0
@@ -1441,6 +1551,9 @@ class OperatorApp:
             }
         else:
             self._overlay = None
+        if self.cam_state == "connecting":
+            # Solo una conexión que entregó video entra al historial.
+            remember_camera(self.url, self.rotation_deg, self.config_path)
         if self.cam_state != "stopped":
             self._set_cam_state("live")
 
@@ -1599,6 +1712,7 @@ class OperatorApp:
     def _send_latch(self, scene):
         if not self.latch_ok or self.connection is None or not self.model_ready:
             self.gate.note_fault()
+            self.block_reason = "el pestillo o el modelo no estaban listos"
             return
         event = str(int(monotonic() * 1000))[-16:]
         try:
@@ -1607,7 +1721,7 @@ class OperatorApp:
             self._latch_open_until = monotonic() + self.hold_seconds
             self.command_lbl.config(
                 text=f"Última etiqueta enviada: {result['command']}\nAcuse del ESP32: {result['ack']}")
-            self.lock_text = (f"abierto: se cierra {self.hold_seconds} s después del último autorizado"
+            self.lock_text = (f"abierto: se cierra {format_seconds(self.hold_seconds)} s después del último autorizado"
                               if result["pulse_confirmed"] else "simulación · posición no confirmada")
         except (OSError, RuntimeError, TimeoutError, ValueError) as error:
             self.ack_text = f"error {error}"
