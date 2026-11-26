@@ -157,6 +157,10 @@ def recognize_frame(frame, detector, human_model, identify, permissions, backend
                                  trust_detector=True, backend=backend, model_ready=model_ready,
                                  describe=describe_region)
         row["box"] = [left, top, right, bottom]
+        # Ojos, nariz y comisuras de YuNet: los usa la prueba de vida (scripts/liveness.py).
+        landmarks = detection[5] if len(detection) > 5 else None
+        if landmarks is not None:
+            row["landmarks"] = np.asarray(landmarks).tolist()
         regions.append(row)
     scene = decide_scene([{key: row[key] for key in ("outcome", "reason", "identity")}
                           for row in regions])

@@ -27,8 +27,9 @@ from scripts.latch_serial import (
 )
 from scripts.live_k01 import HUMAN_RUN, build_identify, face_descriptor, load_keras, paint_regions, recognize_frame
 from scripts.phone_serial_bench import local_stream_url
+from scripts.liveness import LivenessCheck
 from scripts.object_detector import detect_objects, inside_screen, load_object_detector
-from scripts.presentation_gate import PresentationGate, scene_kind
+from scripts.presentation_gate import AUTHORIZED, UNCERTAIN, PresentationGate, scene_kind
 
 
 BG = "#EDF2F6"
@@ -536,6 +537,9 @@ class OperatorApp:
         self._objects = []
         self._object_frames = 0
         self._object_lock = threading.Lock()
+        # Prueba de vida opcional: exige girar la cabeza antes de enviar la orden al ESP32.
+        self.require_liveness = False
+        self.liveness = LivenessCheck()
         self.hold_note = ""
         # Motivo del bloqueo del pestillo, visible en el panel hasta que el operador rearme.
         self.block_reason = ""
@@ -723,7 +727,7 @@ class OperatorApp:
         # Verificación continua y estado del pestillo (nodo IoT).
         latch = self._section(side, "Pestillo · nodo IoT")
         self.streak_lbl = tk.Label(latch, text="", font=self._font(9), fg=WAIT_INK, bg=SURFACE,
-                                   anchor="w")
+                                   anchor="w", justify="left", wraplength=320)
         self.streak_lbl.pack(anchor="w")
         self.streak_bar = tk.Canvas(latch, height=10, bg=TRACK, highlightthickness=0)
         self.streak_bar.pack(fill="x", pady=(4, 10))
@@ -1094,8 +1098,14 @@ class OperatorApp:
 
         objects = tk.Frame(page, bg=SURFACE, padx=24, pady=12)
         objects.pack(anchor="nw", fill="x", padx=16, pady=(0, 16))
-        tk.Label(objects, text="DETECTOR DE OBJETOS (OPCIONAL)", font=self._font(8, bold=True),
-                 fg=WAIT_INK, bg=SURFACE).pack(anchor="w", pady=(0, 6))
+        tk.Label(objects, text="PROTECCIÓN CONTRA FOTOS Y PANTALLAS (OPCIONAL)",
+                 font=self._font(8, bold=True), fg=WAIT_INK, bg=SURFACE).pack(anchor="w", pady=(0, 6))
+        self.liveness_var = tk.BooleanVar(value=False)
+        tk.Checkbutton(objects, variable=self.liveness_var, command=self._toggle_liveness,
+                       text="Exigir prueba de vida: girar la cabeza antes de abrir "
+                            "(puntos de YuNet, sin modelos nuevos)",
+                       font=self._font(9), fg=INK, bg=SURFACE, activebackground=SURFACE,
+                       selectcolor=SURFACE, anchor="w").pack(anchor="w")
         self.objects_var = tk.BooleanVar(value=False)
         self.screens_var = tk.BooleanVar(value=False)
         for text, variable in (
@@ -1107,10 +1117,10 @@ class OperatorApp:
                            selectcolor=SURFACE, anchor="w").pack(anchor="w")
         tk.Label(objects, font=self._font(8), fg=WAIT_INK, bg=SURFACE, anchor="w",
                  justify="left", wraplength=1500,
-                 text="NanoDet-Plus, preentrenado con las 80 clases de COCO (OpenCV Zoo, Apache 2.0, "
-                      "hash verificado). No es un modelo del proyecto ni interviene en la identidad. "
-                      "Tarda unos 100 ms por fotograma: al rechazar pantallas baja la velocidad del "
-                      "video. No detecta fotos impresas.").pack(anchor="w", pady=(6, 0))
+                 text="Prueba de vida: una foto inclinada desplaza la nariz respecto de los ojos como "
+                      "máximo 0,15; una cabeza real, de 0,72 a 3,3; se exige 0,35. No detiene un video "
+                      "del integrante girando. Objetos: NanoDet-Plus preentrenado (COCO, Apache 2.0), "
+                      "~100 ms por fotograma; no detecta fotos impresas.").pack(anchor="w", pady=(6, 0))
 
     def _set_status(self, text):
         self.status.config(text=text)
@@ -1279,7 +1289,12 @@ class OperatorApp:
         self.streak_bar.create_rectangle(0, 0, width * streak / needed, 10,
                                          fill=fill, outline="")
         blocked = self.actuate and not self.gate.can_send
-        if streak >= needed and blocked:
+        waiting_turn = (self.require_liveness and not self.liveness.passed
+                        and self._scene.get("outcome") == "GRANTED")
+        if waiting_turn:
+            percent = round(self.liveness.progress() * 100)
+            text = f"Prueba de vida: gire la cabeza a un lado y vuelva ({percent} %)"
+        elif streak >= needed and blocked:
             text = "Identidad confirmada, pero el pestillo espera rearme"
         elif streak >= needed:
             text = f"Identidad confirmada en {needed} fotogramas seguidos"
@@ -1296,7 +1311,7 @@ class OperatorApp:
         if not self.actuate:
             self.latch_icon.config(text=ICON_LOCK, fg=WAIT_INK)
             self.latch_state_lbl.config(
-                text="Simulación\n" + ("abriría ahora" if streak >= needed
+                text="Simulación\n" + ("abriría ahora" if streak >= needed and not waiting_turn
                                        else "no se envían órdenes"), fg=WAIT_INK)
         elif blocked:
             # Tras una falla no se envían órdenes; el ESP32 ya cerró solo por falta de renovación.
@@ -1882,6 +1897,13 @@ class OperatorApp:
                                 for row in regions])
         return {**scene, **decided, "regions": regions}
 
+    def _toggle_liveness(self):
+        self.require_liveness = bool(self.liveness_var.get())
+        self.liveness.reset()
+        # Una regla nueva exige una racha nueva.
+        self.gate.interrupt()
+        self._ui_streak = 0
+
     def _toggle_objects(self):
         """Carga NanoDet la primera vez; si falta el archivo, deja ambas opciones apagadas."""
         wanted = self.objects_var.get() or self.screens_var.get()
@@ -1904,7 +1926,13 @@ class OperatorApp:
         } | {"event_id": scene.get("event_id")})
         if source == "camera":
             self._ui_streak = self._ui_streak + 1 if scene.get("outcome") == "GRANTED" else 0
-        if may_send_physical(source, scene_kind(scene), self.gate, self.actuate):
+        kind = scene_kind(scene)
+        if source == "camera" and self.require_liveness:
+            alive = self.liveness.update(scene, monotonic())
+            # Sin prueba de vida superada, un Autorizado no cuenta para abrir.
+            if kind == AUTHORIZED and not alive:
+                kind = UNCERTAIN
+        if may_send_physical(source, kind, self.gate, self.actuate):
             self._send_latch(scene)
         self._refresh_rearm()
         if source == "camera":
